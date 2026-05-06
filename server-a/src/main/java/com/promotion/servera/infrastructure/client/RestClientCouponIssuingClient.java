@@ -59,8 +59,9 @@ public class RestClientCouponIssuingClient implements CouponIssuingClient {
         return toIssueResult(body);
     }
 
-    @SuppressWarnings("unused") // Resilience4j 가 리플렉션으로 호출 — 시그니처 일치 필수.
-    private IssueResult issueFallback(Long userId, Long eventId, String idempotencyKey, Throwable t) {
+    // package-private — Resilience4j 가 리플렉션으로 호출 + 단위 테스트가 분기를 직접 검증.
+    @SuppressWarnings("unused")
+    IssueResult issueFallback(Long userId, Long eventId, String idempotencyKey, Throwable t) {
         if (t instanceof CallNotPermittedException) {
             log.warn("circuit breaker OPEN: userId={} eventId={}", userId, eventId);
             return IssueResult.internalError("circuit-open");
