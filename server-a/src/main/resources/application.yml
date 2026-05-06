@@ -64,8 +64,9 @@ logging:
 # 애플리케이션 정책 값. ADR 기반 기본값 + 환경변수 override.
 app:
   server-b:
-    # Phase 8 RestClient 진입 시 사용. Stub profile 에서는 미사용.
-    base-url: ${SERVER_B_URL:http://localhost:8082}
+    # Server B 의 internal API. Stub profile 에서는 미사용.
+    # 포트: server-a=8080, server-b=8081, server-c=8082 (PR #8 에서 server-b 포트 8081 확정).
+    base-url: ${SERVER_B_URL:http://localhost:8081}
     connect-timeout-millis: 1000
     read-timeout-millis: 200    # ADR-001: A→B 호출 timeout
   rate-limit:

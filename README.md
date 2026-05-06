@@ -36,27 +36,52 @@ docker compose up -d
 - 01. 부하 테스트 결과 (Day 4 작성 예정)
 - 02. 100,000명 사이징 계산 (Day 5 작성 예정)
 
-## 검증 — Phase 9 E2E (k6)
+## 검증 — 통합 e2e (k6)
 
-Day 1 의 7개 시나리오 (정상 / 멱등 / cross-user / rate limit / 헤더 누락 / validation /
-Circuit Breaker) 를 k6 스크립트로 자동화했습니다. 각 스크립트는 1 VU / 1 iteration / threshold
-`checks rate==1.0` — assertion 한 건이라도 실패하면 exit code 가 0 이 아닙니다.
+`server-a` + `server-b` + MySQL + Redis 가 모두 기동된 단일 환경에서 7개 시나리오 (phase9-01..06 + day2-04 burst) 를 한 번의 명령으로 검증합니다. assertion 기반 회귀 — 본격 1 vCPU 부하는 Day 4 capacity-planning 의 영역.
 
 ```bash
 brew install k6                                    # macOS
 docker compose up -d mysql redis                   # 인프라
 
-# Stub profile (시나리오 1~6)
-./gradlew :server-a:bootRun --args='--spring.profiles.active=local' &
-./load-test/run-phase9-stub.sh
+# 두 서비스 모두 기동
+./gradlew :server-b:bootRun --args='--spring.profiles.active=local' &
+./gradlew :server-a:bootRun &                      # default profile — RestClient 활성, base-url=8081
 
-# Circuit Breaker (시나리오 7) — Server B 부재 + RestClient 활성화 상태 필요
-kill $(lsof -ti:8080) 2>/dev/null
-./gradlew :server-a:bootRun &
-k6 run load-test/scenarios/phase9-07-circuit-breaker.js
+# 헬스체크
+curl -sS http://localhost:8080/actuator/health
+curl -sS http://localhost:8081/actuator/health
+
+# 통합 시나리오 일괄 실행 (stock seed + outbox truncate + CB warmup + 7 시나리오)
+./load-test/run-integrated.sh
 ```
 
-자세한 사전 조건 / 결과 해석 / CI 통합 가이드는 [`load-test/README.md`](./load-test/README.md) 참조.
+`run-integrated.sh` 가 자동 수행:
+1. Redis 샤드 10 × 100 = 1,000 stock seed
+2. MySQL outbox truncate (fail-fast)
+3. server-a CB warmup curl 5번 (cold start 시 read-timeout 200ms 초과로 OPEN 되는 함정 회피)
+4. phase9-01..06 + day2-04-burst 일괄 실행
+5. Outbox 행 수 사후 출력
+
+자세한 사전 조건 / 환경변수 / 결과 해석 / 트러블슈팅은 [`load-test/README.md`](./load-test/README.md) 참조.
+
+### Stock seed (수동)
+
+운영 endpoint 미구현 — `redis-cli` 직접 SET 또는 cli 도구 영역 (본 과제 미포함).
+
+```bash
+for i in 0 1 2 3 4 5 6 7 8 9; do
+  docker exec promotion-redis redis-cli SET "event:1:stock:$i" 100
+done
+```
+
+### 알려진 trade-off
+
+- **server-b idem 캐시는 idem-only (user-scoped 아님)**: server-a 의 `(user_id, idempotency_key) UNIQUE` 와 비대칭. 같은 idem 으로 다른 user 가 호출하면 server-b 캐시 hit 으로 같은 couponCode 반환 (정상 흐름이 아닌 비정상 케이스). user-scoped 캐시 확장은 ADR-004 후속 검토 영역.
+- **자기 샤드 SOLD_OUT 시 다른 샤드 fallback 없음**: 사용자 hash 가 자기 샤드만 본다. 다른 샤드에 재고가 남아있어도 해당 사용자는 SOLD_OUT 응답.
+- **유령 재고 (B JVM 크래시)**: Lua ISSUED 직후 / Outbox INSERT 직전에 크래시 시 Redis 차감 + MySQL 미INSERT. reconciliation job 미구현 — 프로덕션 진화 방향.
+- **운영 Stock 분배 endpoint 없음**: `StockSeeder` 빈은 테스트 setup 용. 운영에서는 별도 admin endpoint 또는 cli 도구 필요.
+- **Cold start CB OPEN 가능성**: 첫 호출이 read-timeout 200ms 를 초과할 수 있음. `run-integrated.sh` 가 명시적 warmup curl 로 sliding-window 정상화 후 main 시나리오 시작.
 
 ## 실행 정보
 
@@ -100,13 +125,13 @@ k6 run load-test/scenarios/phase9-07-circuit-breaker.js
 | #6 | Idempotency + Rate Limit Filter | merged |
 | #7 | RestClient + Circuit Breaker (+ k6 Phase 9) | merged |
 
-### Day 2 — Server B (재고 + Outbox)
+### Day 2 — Server B (재고 + Outbox + A↔B 통합)
 
 | PR | 내용 | 상태 |
 |---|---|---|
 | #8  | Server B 부트스트랩 + Outbox 인프라 | merged |
-| #9  | docs(decisions): Outbox 전략 결정 근거 | open |
-| #10 | Redis Lua atomic 발급 + `POST /internal/v1/coupons/issue` + 보상 트랜잭션 | in progress |
-| #11 | A↔B 실통합 (`base-url` 정정 + Stub SOLD_OUT hook) + k6 day2 | 예정 |
+| #9  | docs(decisions): Outbox 전략 결정 근거 | merged |
+| #10 | Redis Lua atomic 발급 + 보상 트랜잭션 + 동시성 IT | merged |
+| #11 | A↔B 실통합 (`base-url` 정정) + Stub SOLD_OUT hook + k6 day2 4 시나리오 | in progress |
 
 전체 5일 로드맵: [`CLAUDE.md` §12](./CLAUDE.md).

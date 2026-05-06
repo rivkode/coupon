@@ -12,10 +12,8 @@ import org.springframework.stereotype.Component;
  * Server B 부재 상태에서 Server A 단독 동작을 위한 stub.
  *
  * <p>{@code @Profile("local")} 로만 활성화되며 production / dev profile 에서는
- * RestClientCouponIssuingClient (Phase 8) 가 대신 주입된다.
- *
- * <p>현재는 항상 새 CouponCode 를 생성해 ISSUED 로 응답한다. SOLD_OUT / INTERNAL_ERROR
- * 시뮬레이션은 후속 PR 에서 환경변수 hook 으로 추가 예정.
+ * RestClientCouponIssuingClient 가 대신 주입된다. 항상 새 CouponCode 를 생성해 ISSUED 응답 —
+ * 통합 e2e 검증은 default profile + server-b 부팅 환경에서 수행 (load-test/run-integrated.sh).
  */
 @Component
 @Profile("local")
