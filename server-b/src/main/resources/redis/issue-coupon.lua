@@ -4,7 +4,7 @@
 --
 -- KEYS[1] = stock shard       (event:{eventId}:stock:{shardId}, INTEGER)
 -- KEYS[2] = coupon hash       (coupon:code:{couponCode}, HASH — 임시 발급 정보)
--- KEYS[3] = idempotency key   (coupon:idem:{idempotencyKey}, STRING — 발급된 couponCode 캐시)
+-- KEYS[3] = idempotency key   (coupon:idem:{userId}:{idempotencyKey}, STRING — user-scoped 캐시)
 --
 -- ARGV[1] = couponCode (12자, Java 에서 SecureRandom 으로 생성됨)
 -- ARGV[2] = userId

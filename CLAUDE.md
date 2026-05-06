@@ -167,6 +167,7 @@
 ### ADR-004: Idempotency-Key 헤더 기반 멱등성
 - 결정: 클라이언트가 `Idempotency-Key` 헤더로 UUID 전달. A에서 1차 검사(Redis 캐시), C의 DB UNIQUE constraint로 최종 보장.
 - 적용 범위: 발급(issue), 사용(redeem) 양쪽 모두
+- **user-scoped**: 1차 캐시 키 (`coupon:idem:{userId}:{key}`) 와 outbox UNIQUE (`(user_id, idempotency_key)`) 모두 user-scoped — 다른 user 가 우연히 같은 idem 을 써도 격리. `coupon_code` UNIQUE 는 user 무관 global 권위 (Redis 가 발급한 코드의 유일성).
 
 ### ADR-005: Rate Limiting은 Server A에서
 - 결정: Bucket4j + Redis backend로 사용자별 토큰 버킷.

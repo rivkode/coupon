@@ -33,12 +33,16 @@ public final class RedisKeys {
     }
 
     /**
-     * coupon:idem:{idempotencyKey} — STRING, 발급된 couponCode 의 idempotency 1차 캐시.
-     * server-a 의 IdempotencyFilter 가 분산 캐시여도 race 가능하므로 server-b 에도 1차 캐시.
-     * 최종 멱등성 보장은 Server C 의 coupon.idempotency_key UNIQUE (CLAUDE.md ADR-004).
+     * coupon:idem:{userId}:{idempotencyKey} — STRING, 발급된 couponCode 의 idempotency 1차 캐시.
+     *
+     * <p>user-scoped 키 — server-a 의 {@code (user_id, idempotency_key) UNIQUE} (ADR-004) 와
+     * 정합. 같은 idem 으로 다른 user 가 호출해도 서로 다른 발급 결과를 받는다 (cross-user 충돌 회피).
+     *
+     * <p>server-a 의 IdempotencyFilter 가 분산 캐시여도 race 가능하므로 server-b 에도 1차 캐시
+     * 보유. 최종 멱등성 보장은 Server C 의 coupon.idempotency_key UNIQUE.
      */
-    public static String idempotencyKey(String idempotencyKey) {
-        return "coupon:idem:" + idempotencyKey;
+    public static String idempotencyKey(long userId, String idempotencyKey) {
+        return "coupon:idem:%d:%s".formatted(userId, idempotencyKey);
     }
 
     /** 사용자 hash 기반 샤드 라우팅. */

@@ -58,7 +58,7 @@ public class RedisStockClient {
         List<String> keys = List.of(
             RedisKeys.stockShard(eventId, shardId),
             RedisKeys.couponCode(couponCode.value()),
-            RedisKeys.idempotencyKey(idempotencyKey)
+            RedisKeys.idempotencyKey(userId, idempotencyKey)
         );
         Object[] args = new Object[]{
             couponCode.value(),
@@ -101,7 +101,7 @@ public class RedisStockClient {
         List<String> keys = List.of(
             RedisKeys.stockShard(eventId, shardId),
             RedisKeys.couponCode(couponCode.value()),
-            RedisKeys.idempotencyKey(idempotencyKey)
+            RedisKeys.idempotencyKey(userId, idempotencyKey)
         );
         String result = redis.execute(COMPENSATE_SCRIPT, keys, couponCode.value());
         if (result == null) {
