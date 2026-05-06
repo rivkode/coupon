@@ -24,4 +24,10 @@ public interface CouponIssueOutboxRepository {
      * idx_outbox_unpublished (published, created_at) 인덱스를 활용.
      */
     List<CouponIssueOutbox> findUnpublished(int limit);
+
+    /** Outbox 전체 행 수 — 모니터링 / 통합 테스트 검증 용도. */
+    long count();
+
+    /** Outbox 전체 삭제 — 통합 테스트 cleanup 용도. 운영 호출 금지. */
+    void deleteAll();
 }

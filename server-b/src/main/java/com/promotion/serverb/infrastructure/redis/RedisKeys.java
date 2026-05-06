@@ -32,6 +32,15 @@ public final class RedisKeys {
         return "coupon:code:" + code;
     }
 
+    /**
+     * coupon:idem:{idempotencyKey} — STRING, 발급된 couponCode 의 idempotency 1차 캐시.
+     * server-a 의 IdempotencyFilter 가 분산 캐시여도 race 가능하므로 server-b 에도 1차 캐시.
+     * 최종 멱등성 보장은 Server C 의 coupon.idempotency_key UNIQUE (CLAUDE.md ADR-004).
+     */
+    public static String idempotencyKey(String idempotencyKey) {
+        return "coupon:idem:" + idempotencyKey;
+    }
+
     /** 사용자 hash 기반 샤드 라우팅. */
     public static int shardIdFor(long userId) {
         return Math.floorMod(Long.hashCode(userId), STOCK_SHARDS);

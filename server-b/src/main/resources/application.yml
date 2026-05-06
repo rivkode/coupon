@@ -64,3 +64,12 @@ logging:
     root: INFO
     com.promotion: INFO
     org.springframework.web: INFO
+
+# 발급 정책 값. ADR 기반 기본값 + 환경변수 override.
+app:
+  coupon-issue:
+    # idempotency 캐시 + coupon hash TTL.
+    # 24h 이면 server-a IdempotencyFilter (24h, ADR-004) 와 정합 — 같은 키가 양쪽에서 동시 만료.
+    ttl-seconds: ${COUPON_ISSUE_TTL_SECONDS:86400}
+    # CouponCode 충돌 (확률 ~ 0) 발생 시 새 코드로 재시도 횟수.
+    code-collision-max-retries: ${COUPON_CODE_COLLISION_MAX_RETRIES:3}

@@ -104,8 +104,9 @@ k6 run load-test/scenarios/phase9-07-circuit-breaker.js
 
 | PR | 내용 | 상태 |
 |---|---|---|
-| #8 | Server B 부트스트랩 + Outbox 인프라 | in progress |
-| #9 | Redis Lua atomic 재고 차감 + `POST /internal/v1/coupons/issue` | 예정 |
-| #10 | A↔B 실통합 + k6 day2 시나리오 | 예정 |
+| #8  | Server B 부트스트랩 + Outbox 인프라 | merged |
+| #9  | docs(decisions): Outbox 전략 결정 근거 | open |
+| #10 | Redis Lua atomic 발급 + `POST /internal/v1/coupons/issue` + 보상 트랜잭션 | in progress |
+| #11 | A↔B 실통합 (`base-url` 정정 + Stub SOLD_OUT hook) + k6 day2 | 예정 |
 
 전체 5일 로드맵: [`CLAUDE.md` §12](./CLAUDE.md).

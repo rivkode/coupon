@@ -6,7 +6,7 @@ import java.util.Objects;
 import lombok.Getter;
 
 /**
- * Outbox Aggregate Root — B 가 atomic 재고 차감/코드 발급에 성공한 직후 적재되는 영속 이벤트.
+ * Outbox Aggregate Root — B 가 atomic 재고 차감/코드 발급에 성공한 직후 적재되는 영속 사건.
  *
  * <p>흐름 (CLAUDE.md ADR-002):
  * <ol>
@@ -23,15 +23,14 @@ import lombok.Getter;
  *   <li>한번 published=true 가 된 후에는 다시 false 로 되돌릴 수 없음 (멱등 발행 보장)</li>
  * </ul>
  *
- * <p>payload 는 직렬화된 JSON 문자열 — 도메인은 형식을 모른다 (Application 레이어에서 Jackson 주입).
+ * <p>{@code event} 는 도메인 사건 record. JSON 직렬화는 infrastructure (Mapper) 가 영속 시점에
+ * 처리하므로 도메인은 형식을 모른다.
  */
 @Getter
 public class CouponIssueOutbox {
 
     private Long id;
-    private CouponCode couponCode;
-    private String idempotencyKey;
-    private String payload;
+    private CouponIssuedEvent event;
     private boolean published;
     private Instant publishedAt;
     private Long version;
@@ -44,21 +43,12 @@ public class CouponIssueOutbox {
     /**
      * 새 Outbox 적재. published=false 로 시작.
      */
-    public static CouponIssueOutbox create(
-        CouponCode couponCode,
-        String idempotencyKey,
-        String payload,
-        Instant now
-    ) {
-        Objects.requireNonNull(couponCode, "couponCode");
-        Objects.requireNonNull(idempotencyKey, "idempotencyKey");
-        Objects.requireNonNull(payload, "payload");
+    public static CouponIssueOutbox create(CouponIssuedEvent event, Instant now) {
+        Objects.requireNonNull(event, "event");
         Objects.requireNonNull(now, "now");
 
         CouponIssueOutbox outbox = new CouponIssueOutbox();
-        outbox.couponCode = couponCode;
-        outbox.idempotencyKey = idempotencyKey;
-        outbox.payload = payload;
+        outbox.event = event;
         outbox.published = false;
         outbox.publishedAt = null;
         outbox.createdAt = now;
@@ -71,9 +61,7 @@ public class CouponIssueOutbox {
      */
     public static CouponIssueOutbox reconstitute(
         Long id,
-        CouponCode couponCode,
-        String idempotencyKey,
-        String payload,
+        CouponIssuedEvent event,
         boolean published,
         Instant publishedAt,
         Long version,
@@ -89,15 +77,23 @@ public class CouponIssueOutbox {
 
         CouponIssueOutbox outbox = new CouponIssueOutbox();
         outbox.id = id;
-        outbox.couponCode = couponCode;
-        outbox.idempotencyKey = idempotencyKey;
-        outbox.payload = payload;
+        outbox.event = event;
         outbox.published = published;
         outbox.publishedAt = publishedAt;
         outbox.version = version;
         outbox.createdAt = createdAt;
         outbox.updatedAt = updatedAt;
         return outbox;
+    }
+
+    /** Outbox AR 의 멱등 식별자 — Server C UNIQUE constraint 와 정합 (ADR-004). */
+    public String idempotencyKey() {
+        return event.idempotencyKey();
+    }
+
+    /** 발급된 쿠폰 코드 — UNIQUE constraint 의 값. */
+    public CouponCode couponCode() {
+        return event.couponCode();
     }
 
     /**
@@ -107,7 +103,7 @@ public class CouponIssueOutbox {
     public void markPublished(Instant now) {
         Objects.requireNonNull(now, "now");
         if (this.published) {
-            throw new IllegalStateException("already published: couponCode=" + couponCode.value());
+            throw new IllegalStateException("already published: couponCode=" + couponCode().value());
         }
         this.published = true;
         this.publishedAt = now;
