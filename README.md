@@ -77,7 +77,6 @@ done
 
 ### 알려진 trade-off
 
-- **server-b idem 캐시는 idem-only (user-scoped 아님)**: server-a 의 `(user_id, idempotency_key) UNIQUE` 와 비대칭. 같은 idem 으로 다른 user 가 호출하면 server-b 캐시 hit 으로 같은 couponCode 반환 (정상 흐름이 아닌 비정상 케이스). user-scoped 캐시 확장은 ADR-004 후속 검토 영역.
 - **자기 샤드 SOLD_OUT 시 다른 샤드 fallback 없음**: 사용자 hash 가 자기 샤드만 본다. 다른 샤드에 재고가 남아있어도 해당 사용자는 SOLD_OUT 응답.
 - **유령 재고 (B JVM 크래시)**: Lua ISSUED 직후 / Outbox INSERT 직전에 크래시 시 Redis 차감 + MySQL 미INSERT. reconciliation job 미구현 — 프로덕션 진화 방향.
 - **운영 Stock 분배 endpoint 없음**: `StockSeeder` 빈은 테스트 setup 용. 운영에서는 별도 admin endpoint 또는 cli 도구 필요.
@@ -105,7 +104,7 @@ done
 
 - A→B 동기 + B→C 비동기로 즉시 응답 + 영구 저장 분리 (ADR-001)
 - Redis Lua 기반 atomic 재고 차감, 10 샤드로 Hot Spot 회피 (ADR-003)
-- 이중 멱등성 방어: Server A `(user_id, idempotency_key) UNIQUE` + Server C `idempotency_key UNIQUE` (ADR-004)
+- 삼중 멱등성 방어: Server A `(user_id, idempotency_key) UNIQUE` + Server B Redis user-scoped 1차 캐시 + Server C `idempotency_key UNIQUE` (ADR-004 일관 적용)
 - Bucket4j Lettuce backend, 사용자당 10 req/sec (ADR-005)
 - redeem 낙관적 락 (`@Version`), 비관 락 회피 (ADR-007)
 

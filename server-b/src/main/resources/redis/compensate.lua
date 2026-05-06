@@ -7,7 +7,7 @@
 --
 -- KEYS[1] = stock shard
 -- KEYS[2] = coupon hash
--- KEYS[3] = idempotency key
+-- KEYS[3] = idempotency key       (coupon:idem:{userId}:{idempotencyKey}, user-scoped)
 --
 -- ARGV[1] = couponCode (보상 대상 — 우리가 발급했던 코드)
 --

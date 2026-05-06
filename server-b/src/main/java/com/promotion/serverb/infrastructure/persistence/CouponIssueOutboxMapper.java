@@ -35,6 +35,7 @@ final class CouponIssueOutboxMapper {
         return CouponIssueOutboxJpaEntity.builder()
             .id(domain.getId())
             .couponCode(domain.couponCode().value())
+            .userId(domain.getEvent().userId())
             .idempotencyKey(domain.idempotencyKey())
             .payload(serialize(domain.getEvent(), objectMapper))
             .published(domain.isPublished())

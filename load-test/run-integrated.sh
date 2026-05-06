@@ -27,19 +27,23 @@ echo "  Integrated test setup"
 echo "  base-url=$BASE_URL event=$EVENT_ID stock=$TOTAL_STOCK warmup=$WARMUP"
 echo "=========================================="
 
-# 1) Stock seed (운영 endpoint 미구현 — redis-cli 직접 SET).
+# 1) Redis FLUSHDB — 이전 run 의 rate-limit bucket / idem 캐시 / coupon hash 모두 정리.
+#    Stock 도 날아가므로 이 직후 재seed.
+docker exec promotion-redis redis-cli FLUSHDB >/dev/null
+
+# 2) MySQL 정리 — server_a.issue_request (이전 user_id+idem 충돌 회피) + server_b.outbox.
+if ! docker exec promotion-mysql mysql -upromotion -ppromotion -e \
+    "USE server_a; TRUNCATE TABLE issue_request; USE server_b; TRUNCATE TABLE coupon_issue_outbox;" 2>/dev/null; then
+    echo "mysql truncate failed (mysql 컨테이너 / schema 문제)"
+    exit 1
+fi
+
+# 3) Stock seed (운영 endpoint 미구현 — redis-cli 직접 SET).
 for i in 0 1 2 3 4 5 6 7 8 9; do
     docker exec promotion-redis redis-cli SET "event:${EVENT_ID}:stock:${i}" "$STOCK_PER_SHARD" >/dev/null
 done
 
-# 2) MySQL outbox cleanup (이전 run 잔여 행 제거). 실패하면 사후 검증이 무의미.
-if ! docker exec promotion-mysql mysql -upromotion -ppromotion server_b \
-    -e "TRUNCATE TABLE coupon_issue_outbox" 2>/dev/null; then
-    echo "outbox truncate failed (mysql 컨테이너 / schema 문제)"
-    exit 1
-fi
-
-# 3) CB warmup — server-a 의 cold start 첫 호출이 read-timeout 200ms 를 초과해 CB OPEN 되는 것을 방지.
+# 4) CB warmup — server-a 의 cold start 첫 호출이 read-timeout 200ms 를 초과해 CB OPEN 되는 것을 방지.
 #    JIT + connection pool 워밍업까지 한 번에 흡수.
 echo "Warming up server-a Circuit Breaker..."
 for i in 1 2 3 4 5; do
@@ -54,7 +58,7 @@ for i in 1 2 3 4 5; do
     sleep 0.3
 done
 
-# 4) 시나리오 일괄 실행. STOCK / WARMUP 을 day2-04 burst 에 명시 주입.
+# 5) 시나리오 일괄 실행. STOCK / WARMUP 을 day2-04 burst 에 명시 주입.
 SCENARIOS=(
     "load-test/scenarios/phase9-01-issue-success.js"
     "load-test/scenarios/phase9-02-idempotency.js"
@@ -80,7 +84,7 @@ for s in "${SCENARIOS[@]}"; do
     echo
 done
 
-# 5) 사후 검증 — Outbox 행 수 = warmup curl + phase9-01..04 의 SUCCEEDED + day2-04 의 SUCCEEDED.
+# 6) 사후 검증 — Outbox 행 수 = warmup curl + phase9-01..04 의 SUCCEEDED + day2-04 의 SUCCEEDED.
 ISSUED_DB=$(docker exec promotion-mysql mysql -upromotion -ppromotion server_b -N \
     -e "SELECT COUNT(*) FROM coupon_issue_outbox" 2>/dev/null || echo "?")
 echo "[verify] coupon_issue_outbox rows = $ISSUED_DB"

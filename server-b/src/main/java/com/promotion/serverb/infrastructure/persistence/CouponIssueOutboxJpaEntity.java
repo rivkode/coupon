@@ -31,6 +31,10 @@ class CouponIssueOutboxJpaEntity {
     @Column(name = "coupon_code", nullable = false, length = 12)
     private String couponCode;
 
+    // user-scoped UNIQUE (user_id, idempotency_key) 의 일부 — ADR-004 정합 (V2 마이그레이션).
+    @Column(name = "user_id", nullable = false)
+    private Long userId;
+
     @Column(name = "idempotency_key", nullable = false, length = 64)
     private String idempotencyKey;
 

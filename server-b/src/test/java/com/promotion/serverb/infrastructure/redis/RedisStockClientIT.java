@@ -60,7 +60,7 @@ class RedisStockClientIT {
 
         int shard = RedisKeys.shardIdFor(userId);
         assertThat(template.opsForValue().get(RedisKeys.stockShard(EVENT_ID, shard))).isEqualTo("9");
-        assertThat(template.opsForValue().get(RedisKeys.idempotencyKey(idem))).isEqualTo(code.value());
+        assertThat(template.opsForValue().get(RedisKeys.idempotencyKey(userId, idem))).isEqualTo(code.value());
         // coupon hash 의 userId 필드 검증
         assertThat(template.<String, String>opsForHash()
             .get(RedisKeys.couponCode(code.value()), "userId")).isEqualTo(String.valueOf(userId));
@@ -136,7 +136,7 @@ class RedisStockClientIT {
 
         assertThat(comp).isEqualTo(CompensationResult.OK);
         assertThat(template.opsForValue().get(stockKey)).isEqualTo("10");
-        assertThat(template.opsForValue().get(RedisKeys.idempotencyKey(idem))).isNull();
+        assertThat(template.opsForValue().get(RedisKeys.idempotencyKey(userId, idem))).isNull();
         assertThat(template.opsForHash().entries(RedisKeys.couponCode(code.value()))).isEmpty();
     }
 
@@ -176,6 +176,31 @@ class RedisStockClientIT {
         assertThat(comp).isEqualTo(CompensationResult.SKIPPED);
         // 재고는 9 그대로 — 다른 요청의 정상 발급분이 보호됨
         assertThat(template.opsForValue().get(stockKey)).isEqualTo("9");
-        assertThat(template.opsForValue().get(RedisKeys.idempotencyKey(idem))).isEqualTo(realCode.value());
+        assertThat(template.opsForValue().get(RedisKeys.idempotencyKey(userId, idem))).isEqualTo(realCode.value());
+    }
+
+    @Test
+    @DisplayName("ALREADY_ISSUED — 다른 user 가 같은 idem 으로 호출하면 user-scoped 캐시라 ISSUED 신규 발급")
+    void cross_user_same_idem_returns_separate_issued() {
+        seeder.seed(Stock.of(EVENT_ID, 100));
+        String sharedIdem = UUID.randomUUID().toString();
+        long userA = 11L;
+        long userB = 12L;
+        CouponCode codeA = CouponCode.generate();
+        CouponCode codeB = CouponCode.generate();
+
+        LuaIssueResult resultA = redis.tryIssue(EVENT_ID, userA, sharedIdem, codeA, TTL, Instant.now());
+        LuaIssueResult resultB = redis.tryIssue(EVENT_ID, userB, sharedIdem, codeB, TTL, Instant.now());
+
+        // 두 user 모두 ISSUED — server-a 의 (user_id, idem) UNIQUE 와 정합 (ADR-004 user-scoped).
+        assertThat(resultA.status()).isEqualTo(LuaIssueStatus.ISSUED);
+        assertThat(resultB.status()).isEqualTo(LuaIssueStatus.ISSUED);
+        assertThat(resultA.couponCode()).isEqualTo(codeA);
+        assertThat(resultB.couponCode()).isEqualTo(codeB);
+        assertThat(resultA.couponCode()).isNotEqualTo(resultB.couponCode());
+
+        // user-scoped 키 — 서로 다른 캐시 entry.
+        assertThat(template.opsForValue().get(RedisKeys.idempotencyKey(userA, sharedIdem))).isEqualTo(codeA.value());
+        assertThat(template.opsForValue().get(RedisKeys.idempotencyKey(userB, sharedIdem))).isEqualTo(codeB.value());
     }
 }
