@@ -68,7 +68,9 @@ services:
     image: provectuslabs/kafka-ui:latest
     container_name: promotion-kafka-ui
     ports:
-      - "8081:8080"
+      # 호스트 포트 8081 은 server-b application.yml 이 점유 (A→B sync 호출 endpoint).
+      # Kafka UI 는 8085 로 이전.
+      - "8085:8080"
     environment:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092

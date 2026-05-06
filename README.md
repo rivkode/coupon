@@ -63,15 +63,16 @@ k6 run load-test/scenarios/phase9-07-circuit-breaker.js
 ### 애플리케이션
 
 - Server A: `http://localhost:8080/actuator/health`
+- Server B: `http://localhost:8081/actuator/health`
 - Server C: `http://localhost:8082/actuator/health`
-- Prometheus: `http://localhost:8080/actuator/prometheus` / `http://localhost:8082/actuator/prometheus`
+- Prometheus: `http://localhost:8080/actuator/prometheus` / `http://localhost:8081/actuator/prometheus` / `http://localhost:8082/actuator/prometheus`
 
 ### 인프라
 
-- MySQL `3306` (root / `rootpassword`, schemas: `server_a`, `server_c`)
+- MySQL `3306` (root / `rootpassword`, schemas: `server_a`, `server_b`, `server_c`)
 - Redis `6379`
 - Kafka `9092` (컨테이너 간 INTERNAL) / `29092` (호스트 HOST)
-- Kafka UI `http://localhost:8081`
+- Kafka UI `http://localhost:8085`
 
 자세한 명령어와 검증 절차는 [01. 아키텍처 개요 §6 로컬 실행](docs/architecture/01.Architecture-Overview.md#6-로컬-실행) 참조.
 
@@ -85,7 +86,9 @@ k6 run load-test/scenarios/phase9-07-circuit-breaker.js
 
 상세 근거는 [01. 아키텍처 개요 §5 핵심 설계 결정](docs/architecture/01.Architecture-Overview.md#5-핵심-설계-결정-adr) 참조.
 
-## 진행 상황 (Day 1)
+## 진행 상황
+
+### Day 1 — Server A 단독 동작 (완료)
 
 | PR | 내용 | 상태 |
 |---|---|---|
@@ -95,7 +98,14 @@ k6 run load-test/scenarios/phase9-07-circuit-breaker.js
 | #4 | docs/architecture/ 분리 | merged |
 | #5 | Server A 발급 API + Stub 클라이언트 | merged |
 | #6 | Idempotency + Rate Limit Filter | merged |
-| #7 | RestClient + Circuit Breaker (+ k6 Phase 9) | open |
+| #7 | RestClient + Circuit Breaker (+ k6 Phase 9) | merged |
 
-PR #7 머지 후 Day 1 단일 Server A 가 완전히 동작합니다. 전체 5일 로드맵:
-[`CLAUDE.md` §12](./CLAUDE.md).
+### Day 2 — Server B (재고 + Outbox)
+
+| PR | 내용 | 상태 |
+|---|---|---|
+| #8 | Server B 부트스트랩 + Outbox 인프라 | in progress |
+| #9 | Redis Lua atomic 재고 차감 + `POST /internal/v1/coupons/issue` | 예정 |
+| #10 | A↔B 실통합 + k6 day2 시나리오 | 예정 |
+
+전체 5일 로드맵: [`CLAUDE.md` §12](./CLAUDE.md).
