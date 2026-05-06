@@ -189,7 +189,7 @@
 | 카테고리 | 기술 | 버전 |
 |------|------|------|
 | 언어 | Java | 21 |
-| 프레임워크 | Spring Boot | 3.3.x (Java 21 호환 LTS) |
+| 프레임워크 | Spring Boot | 3.5.14 (Java 21 호환 GA) |
 | 빌드 | Gradle (Kotlin DSL) | 8.x |
 | RDBMS | MySQL | 8.x |
 | In-memory / NoSQL | Redis | 7.x |
