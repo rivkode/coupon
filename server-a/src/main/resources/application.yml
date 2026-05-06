@@ -61,12 +61,22 @@ logging:
     com.promotion: INFO
     org.springframework.web: INFO
 
-# Server B 호출 설정. Phase 6 에선 Stub 만 활성화되어 미사용. Phase 8 RestClient 진입 시 사용.
+# 애플리케이션 정책 값. ADR 기반 기본값 + 환경변수 override.
 app:
   server-b:
+    # Phase 8 RestClient 진입 시 사용. Stub profile 에서는 미사용.
     base-url: ${SERVER_B_URL:http://localhost:8082}
     connect-timeout-millis: 1000
-    read-timeout-millis: 200
+    read-timeout-millis: 200    # ADR-001: A→B 호출 timeout
+  rate-limit:
+    user:
+      # ADR-005: 사용자당 10 req/sec. burst 는 capacity = refill 로 평탄화.
+      capacity: ${RATE_LIMIT_CAPACITY:10}
+      refill-tokens: ${RATE_LIMIT_REFILL_TOKENS:10}
+      refill-period-seconds: ${RATE_LIMIT_REFILL_SECONDS:1}
+  idempotency:
+    # ADR-004: Idempotency-Key 응답 캐시 TTL.
+    ttl-hours: ${IDEMPOTENCY_TTL_HOURS:24}
 
 # Resilience4j placeholder — Phase 8 에서 본격 설정 추가.
 # resilience4j:
