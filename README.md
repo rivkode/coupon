@@ -36,7 +36,7 @@ docker compose up -d
 - 01. 부하 테스트 결과 (Day 4 작성 예정)
 - 02. 100,000명 사이징 계산 (Day 5 작성 예정)
 
-## 검증 — Phase 9 E2E (k6)
+## 검증 — Day 1 Phase 9 E2E (k6)
 
 Day 1 의 7개 시나리오 (정상 / 멱등 / cross-user / rate limit / 헤더 누락 / validation /
 Circuit Breaker) 를 k6 스크립트로 자동화했습니다. 각 스크립트는 1 VU / 1 iteration / threshold
@@ -57,6 +57,44 @@ k6 run load-test/scenarios/phase9-07-circuit-breaker.js
 ```
 
 자세한 사전 조건 / 결과 해석 / CI 통합 가이드는 [`load-test/README.md`](./load-test/README.md) 참조.
+
+## 검증 — Day 2 E2E (Server A → Server B 통합)
+
+Day 2 는 4 시나리오로 나뉩니다 — Stub 3개 + 통합 1개.
+
+```bash
+docker compose up -d mysql redis
+
+# (1) Stub 모드 — server-a 단독 + StubCouponIssuingClient. ISSUED / 멱등 / SOLD_OUT.
+./gradlew :server-a:bootRun --args='--spring.profiles.active=local' &
+./load-test/run-day2-stub.sh
+
+# (2) 통합 모드 — server-a (default) + server-b + Redis stock seed → 50 VU × 4 iter burst.
+kill $(lsof -ti:8080) 2>/dev/null
+./gradlew :server-b:bootRun --args='--spring.profiles.active=local' &
+./gradlew :server-a:bootRun &     # default profile — RestClient 활성, base-url=http://localhost:8081
+./load-test/run-day2-integrated.sh
+```
+
+`run-day2-integrated.sh` 가 자동 수행: Redis 샤드 10 × 10 = 100 stock seed, MySQL outbox truncate, k6 실행, Outbox 행 수 검증.
+
+### Stock seed (수동)
+
+운영 endpoint 미구현 — `redis-cli` 직접 SET 또는 cli 도구 영역 (본 과제 미포함).
+
+```bash
+for i in 0 1 2 3 4 5 6 7 8 9; do
+  docker exec promotion-redis redis-cli SET "event:1:stock:$i" 100
+done
+```
+
+### 알려진 trade-off
+
+- **Stub `sold-out-*` trigger key**: local profile 의 `StubCouponIssuingClient` 가 idempotency-key 가 `sold-out-` prefix 인 호출에 대해 SOLD_OUT 응답을 강제. day2-03 시나리오 검증용. production 비활성 (`@Profile("local")`).
+- **자기 샤드 SOLD_OUT 시 다른 샤드 fallback 없음**: 사용자 hash 가 자기 샤드만 본다. 다른 샤드에 재고가 남아있어도 해당 사용자는 SOLD_OUT 응답.
+- **유령 재고 (B JVM 크래시)**: Lua ISSUED 직후 / Outbox INSERT 직전에 크래시 시 Redis 차감 + MySQL 미INSERT. reconciliation job 미구현 — 프로덕션 진화 방향.
+- **운영 Stock 분배 endpoint 없음**: `StockSeeder` 빈은 테스트 setup 용. 운영에서는 별도 admin endpoint 또는 cli 도구 필요.
+- **Cold start CB OPEN 가능성**: 첫 호출이 read-timeout 200ms 를 초과할 수 있음. `run-day2-integrated.sh` 의 k6 setup() 이 5번 warmup 으로 sliding-window 정상화 후 main 부하 시작.
 
 ## 실행 정보
 
@@ -100,13 +138,13 @@ k6 run load-test/scenarios/phase9-07-circuit-breaker.js
 | #6 | Idempotency + Rate Limit Filter | merged |
 | #7 | RestClient + Circuit Breaker (+ k6 Phase 9) | merged |
 
-### Day 2 — Server B (재고 + Outbox)
+### Day 2 — Server B (재고 + Outbox + A↔B 통합)
 
 | PR | 내용 | 상태 |
 |---|---|---|
 | #8  | Server B 부트스트랩 + Outbox 인프라 | merged |
-| #9  | docs(decisions): Outbox 전략 결정 근거 | open |
-| #10 | Redis Lua atomic 발급 + `POST /internal/v1/coupons/issue` + 보상 트랜잭션 | in progress |
-| #11 | A↔B 실통합 (`base-url` 정정 + Stub SOLD_OUT hook) + k6 day2 | 예정 |
+| #9  | docs(decisions): Outbox 전략 결정 근거 | merged |
+| #10 | Redis Lua atomic 발급 + 보상 트랜잭션 + 동시성 IT | merged |
+| #11 | A↔B 실통합 (`base-url` 정정) + Stub SOLD_OUT hook + k6 day2 4 시나리오 | in progress |
 
 전체 5일 로드맵: [`CLAUDE.md` §12](./CLAUDE.md).
