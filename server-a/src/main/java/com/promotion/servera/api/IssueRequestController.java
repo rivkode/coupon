@@ -4,10 +4,11 @@ import com.promotion.servera.api.dto.ApiResponse;
 import com.promotion.servera.api.dto.IssueCouponRequest;
 import com.promotion.servera.api.dto.IssueCouponResponse;
 import com.promotion.servera.application.IssueCommand;
+import com.promotion.servera.application.IssueOutcome;
 import com.promotion.servera.application.IssueRequestService;
-import com.promotion.servera.domain.IssueRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -22,20 +23,22 @@ import org.springframework.web.bind.annotation.RestController;
  * <p>Headers:
  * <ul>
  *   <li>{@code X-User-Id} (필수) — 인증 단순화. Day 1 은 JWT 미도입.</li>
- *   <li>{@code Idempotency-Key} (필수) — UUID. PR #5 (Phase 7) 에서 Filter 가 검증/캐싱.</li>
+ *   <li>{@code Idempotency-Key} (필수) — UUID. PR #6 의 IdempotencyFilter 가 검증/캐싱.</li>
  * </ul>
  *
- * <p>HTTP 상태 매핑 (Day 1):
+ * <p>HTTP 상태 매핑:
  * <ul>
- *   <li>SUCCEEDED → 200</li>
- *   <li>FAILED (Server B 응답 SOLD_OUT / INTERNAL_ERROR) → 200, body 의 {@code status} 로 구분</li>
+ *   <li>downstreamStatus = ISSUED / ALREADY_ISSUED / SOLD_OUT → 200 (body 의 {@code status} 로 구분)</li>
+ *   <li>downstreamStatus = INTERNAL_ERROR (Circuit OPEN / timeout / 5xx) → 503 + {@code Retry-After}</li>
  * </ul>
- * Phase 8 Circuit Breaker 진입 시 INTERNAL_ERROR 는 503 으로 격상 검토.
+ * 503 을 idempotency 캐시에 저장하지 않도록 IdempotencyFilter 에서 2xx 만 캐싱.
  */
 @RestController
 @RequestMapping("/api/v1/coupons/issue-requests")
 @RequiredArgsConstructor
 public class IssueRequestController {
+
+    private static final String RETRY_AFTER_SECONDS = "5";
 
     private final IssueRequestService issueRequestService;
 
@@ -45,8 +48,13 @@ public class IssueRequestController {
         @RequestHeader("Idempotency-Key") String idempotencyKey,
         @Valid @RequestBody IssueCouponRequest body
     ) {
-        IssueRequest result = issueRequestService.issue(IssueCommand.of(userId, idempotencyKey, body));
-        return ResponseEntity.status(HttpStatus.OK)
-            .body(ApiResponse.success(IssueCouponResponse.from(result)));
+        IssueOutcome outcome = issueRequestService.issue(IssueCommand.of(userId, idempotencyKey, body));
+        IssueCouponResponse payload = IssueCouponResponse.from(outcome.issueRequest());
+        if (outcome.isDownstreamUnavailable()) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header(HttpHeaders.RETRY_AFTER, RETRY_AFTER_SECONDS)
+                .body(ApiResponse.success(payload));
+        }
+        return ResponseEntity.status(HttpStatus.OK).body(ApiResponse.success(payload));
     }
 }

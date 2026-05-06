@@ -36,6 +36,28 @@ docker compose up -d
 - 01. 부하 테스트 결과 (Day 4 작성 예정)
 - 02. 100,000명 사이징 계산 (Day 5 작성 예정)
 
+## 검증 — Phase 9 E2E (k6)
+
+Day 1 의 7개 시나리오 (정상 / 멱등 / cross-user / rate limit / 헤더 누락 / validation /
+Circuit Breaker) 를 k6 스크립트로 자동화했습니다. 각 스크립트는 1 VU / 1 iteration / threshold
+`checks rate==1.0` — assertion 한 건이라도 실패하면 exit code 가 0 이 아닙니다.
+
+```bash
+brew install k6                                    # macOS
+docker compose up -d mysql redis                   # 인프라
+
+# Stub profile (시나리오 1~6)
+./gradlew :server-a:bootRun --args='--spring.profiles.active=local' &
+./load-test/run-phase9-stub.sh
+
+# Circuit Breaker (시나리오 7) — Server B 부재 + RestClient 활성화 상태 필요
+kill $(lsof -ti:8080) 2>/dev/null
+./gradlew :server-a:bootRun &
+k6 run load-test/scenarios/phase9-07-circuit-breaker.js
+```
+
+자세한 사전 조건 / 결과 해석 / CI 통합 가이드는 [`load-test/README.md`](./load-test/README.md) 참조.
+
 ## 실행 정보
 
 ### 애플리케이션
@@ -65,13 +87,15 @@ docker compose up -d
 
 ## 진행 상황 (Day 1)
 
-```
-0d30470 chore(infra): Gradle 멀티모듈 + docker-compose + PR 템플릿 셋업 (#1)
-cf5985e feat(domain): Server A/C 도메인 모델 + Flyway 마이그레이션 (#2)
-1fe3c27 docs(readme): 평가자용 골격 + Mermaid 아키텍처 + 로컬 실행 방법 (#3)
-```
+| PR | 내용 | 상태 |
+|---|---|---|
+| #1 | Gradle 멀티모듈 + docker-compose | merged |
+| #2 | 도메인 모델 + Flyway | merged |
+| #3 | README 골격 + Mermaid | merged |
+| #4 | docs/architecture/ 분리 | merged |
+| #5 | Server A 발급 API + Stub 클라이언트 | merged |
+| #6 | Idempotency + Rate Limit Filter | merged |
+| #7 | RestClient + Circuit Breaker (+ k6 Phase 9) | open |
 
-이후 PR (#4 발급 API + Stub 클라이언트, #5 Idempotency + Rate Limit, #6 Circuit Breaker)
-이 머지되면 Day 1 단일 Server A 가 완전히 동작합니다.
-
-전체 5일 로드맵: [`CLAUDE.md` §12](./CLAUDE.md)
+PR #7 머지 후 Day 1 단일 Server A 가 완전히 동작합니다. 전체 5일 로드맵:
+[`CLAUDE.md` §12](./CLAUDE.md).
