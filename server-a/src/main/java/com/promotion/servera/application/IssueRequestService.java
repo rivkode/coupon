@@ -38,7 +38,7 @@ public class IssueRequestService {
     private final CouponIssuingClient couponIssuingClient;
     private final TransactionTemplate transactionTemplate;
 
-    public IssueRequest issue(IssueCommand cmd) {
+    public IssueOutcome issue(IssueCommand cmd) {
         Instant now = Instant.now();
 
         Event event = eventRepository.findById(cmd.eventId())
@@ -57,14 +57,17 @@ public class IssueRequestService {
         try {
             result = couponIssuingClient.issue(cmd.userId(), cmd.eventId(), cmd.idempotencyKey());
         } catch (RuntimeException ex) {
+            // RestClientCouponIssuingClient 는 fallbackMethod 로 모든 예외를 IssueResult.internalError 로
+            // 매핑하므로 여기엔 도달하지 않는다. Stub 또는 향후 다른 구현체가 예외를 던질 가능성을 가드.
             log.warn("coupon issuing client threw: requestId={} reason={}",
                 received.getRequestId(), ex.getMessage());
             result = IssueResult.internalError("client-exception: " + ex.getClass().getSimpleName());
         }
 
         IssueResult finalResult = result;
+        IssueRequest finalized;
         try {
-            return Objects.requireNonNull(
+            finalized = Objects.requireNonNull(
                 transactionTemplate.execute(status -> {
                     received.markForwarded();
                     if (finalResult.isSuccess()) {
@@ -77,8 +80,7 @@ public class IssueRequestService {
                 "tx2 returned null");
         } catch (RuntimeException tx2Ex) {
             // 외부 호출은 성공했으나 마감 tx 실패 — couponCode 가 실제 발급되었는지 사후 reconcile
-            // 가능하도록 식별 정보 일괄 로깅. PR #5 (Idempotency Filter) 진입 시에도 동일 키 재요청은
-            // DB UNIQUE constraint 가 차단 → 결과적으로 안전하나, 로그 단서가 없으면 추적 불가.
+            // 가능하도록 식별 정보 일괄 로깅. 동일 키 재요청은 DB UNIQUE constraint 가 차단.
             String code = finalResult.couponCode() == null ? null : finalResult.couponCode().value();
             log.error(
                 "issue finalize tx2 failed; manual reconcile may be needed: requestId={} userId={} idempotencyKey={} clientStatus={} couponCode={}",
@@ -86,5 +88,6 @@ public class IssueRequestService {
                 finalResult.status(), code, tx2Ex);
             throw tx2Ex;
         }
+        return new IssueOutcome(finalized, finalResult.status());
     }
 }

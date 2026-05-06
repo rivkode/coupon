@@ -78,8 +78,20 @@ app:
     # ADR-004: Idempotency-Key 응답 캐시 TTL.
     ttl-hours: ${IDEMPOTENCY_TTL_HOURS:24}
 
-# Resilience4j placeholder — Phase 8 에서 본격 설정 추가.
-# resilience4j:
-#   circuitbreaker:
-#     instances:
-#       couponIssuing: ...
+# A→B 호출 보호 (CLAUDE.md ADR-001).
+# read-timeout 200ms 는 RestClient HTTP 레벨 (Resilience4j TimeLimiter 미사용 — 동기 인터페이스 유지).
+# Circuit Breaker 가 그 timeout 실패와 5xx 를 카운트해서 OPEN 결정.
+resilience4j:
+  circuitbreaker:
+    instances:
+      couponIssuing:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 20
+        minimum-number-of-calls: 10
+        failure-rate-threshold: 50          # 50% 실패 → OPEN
+        slow-call-rate-threshold: 50
+        slow-call-duration-threshold: 200ms # 200ms 초과 = slow
+        wait-duration-in-open-state: 5s
+        permitted-number-of-calls-in-half-open-state: 3
+        automatic-transition-from-open-to-half-open-enabled: true
+        register-health-indicator: true
