@@ -1,0 +1,21 @@
+# 로컬 개발 프로파일.
+# 활성화: `./gradlew :server-a:bootRun --args='--spring.profiles.active=local'`
+# StubCouponIssuingClient (@Profile("local")) 가 활성화되어 Server B 부재 상태로 단독 동작.
+spring:
+  config:
+    activate:
+      on-profile: local
+  datasource:
+    url: jdbc:mysql://localhost:3306/server_a?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    username: promotion
+    password: promotion
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+logging:
+  level:
+    com.promotion: DEBUG
+    org.springframework.web: DEBUG
+    org.hibernate.SQL: DEBUG

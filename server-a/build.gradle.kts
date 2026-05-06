@@ -10,6 +10,8 @@ dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-validation")
 	implementation("org.springframework.boot:spring-boot-starter-data-jpa")
 	implementation("org.springframework.boot:spring-boot-starter-data-redis")
+	// Lettuce 풀링(`spring.data.redis.lettuce.pool.*`) 활성화에 필요. PR #5 (Idempotency / Rate Limit) 의 Redis 호출량 증가에 대비.
+	implementation("org.apache.commons:commons-pool2")
 
 	runtimeOnly("com.mysql:mysql-connector-j")
 	implementation("org.flywaydb:flyway-core")

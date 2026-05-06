@@ -23,12 +23,53 @@ spring:
     enabled: true
     baseline-on-migrate: false
     locations: classpath:db/migration
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 1000ms
+      connect-timeout: 1000ms
+      lettuce:
+        pool:
+          enabled: true
+          max-active: 16
+          max-idle: 8
+          min-idle: 2
+          max-wait: 500ms
 
 server:
   port: 8080
+  shutdown: graceful
 
 management:
   endpoints:
     web:
       exposure:
-        include: health, info, metrics, prometheus
+        include: health, info, metrics, prometheus, circuitbreakers, ratelimiters
+  endpoint:
+    health:
+      show-details: when-authorized
+      probes:
+        enabled: true
+
+logging:
+  pattern:
+    # traceId / spanId 는 Day 1 단계에선 MDC 미주입 (Phase 7 이후 보강).
+    level: "%5p"
+  level:
+    root: INFO
+    com.promotion: INFO
+    org.springframework.web: INFO
+
+# Server B 호출 설정. Phase 6 에선 Stub 만 활성화되어 미사용. Phase 8 RestClient 진입 시 사용.
+app:
+  server-b:
+    base-url: ${SERVER_B_URL:http://localhost:8082}
+    connect-timeout-millis: 1000
+    read-timeout-millis: 200
+
+# Resilience4j placeholder — Phase 8 에서 본격 설정 추가.
+# resilience4j:
+#   circuitbreaker:
+#     instances:
+#       couponIssuing: ...
