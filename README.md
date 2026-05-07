@@ -82,6 +82,9 @@ done
 - **운영 Stock 분배 endpoint 없음**: `StockSeeder` 빈은 테스트 setup 용. 운영에서는 별도 admin endpoint 또는 cli 도구 필요.
 - **Cold start CB OPEN 가능성**: 첫 호출이 read-timeout 200ms 를 초과할 수 있음. `run-integrated.sh` 가 명시적 warmup curl 로 sliding-window 정상화 후 main 시나리오 시작.
 - **Server A 의 요청 로그 batch insert / 명시적 백프레셔 미적용 (Day 4 측정 후 결정)**: CLAUDE.md §3 평가 ① / ADR-005 가 권고하나 "감으로" 도입하지 않는다. Day 4 의 k6 부하 측정으로 병목을 정량 식별한 뒤 도입 여부 + 구현 형태를 결정 — 근거: [`docs/decisions/server-a-tuning-load-test-driven.md`](docs/decisions/server-a-tuning-load-test-driven.md).
+- **Server C consumer DLT 미구현**: 일시적 DB 오류는 Spring Kafka `DefaultErrorHandler` 의 default retry, UNIQUE 위반 / 잘못된 payload 는 ack-and-skip 으로 흡수. retry 모두 실패 시 stop → 운영 알림 + 수동 복구. CDC + DLT 는 프로덕션 진화 방향.
+- **Server C `concurrency: 1`**: 1 vCPU 환경에서 컨텍스트 스위칭 비용 > 병렬 이득. partition 3 개를 단일 consumer 가 처리 → 인스턴스 처리량은 partition 1개 단위 처리 속도에 묶임. 운영 진화 시 `concurrency=3` (인스턴스 수와 별개로 listener thread).
+- **IT 환경 정책 차이**: `server-c CouponConsumerIT` 는 EmbeddedKafka (in-process broker) 를 쓰고 `server-b OutboxPollerIT` 는 host docker-compose Kafka 를 쓴다. 의도가 다름 — 전자는 "실 메시지 → consume → DB 영속" 전 흐름 검증이라 broker 가 필수, 후자는 "트랜잭션 분리 + SKIP LOCKED + markPublished" 만 검증하므로 publisher 를 mock 처리. EmbeddedKafka 는 사전 docker compose up 없이 `./gradlew test` 한 줄로 통과.
 
 ## 실행 정보
 
@@ -105,7 +108,7 @@ done
 
 - A→B 동기 + B→C 비동기로 즉시 응답 + 영구 저장 분리 (ADR-001)
 - Redis Lua 기반 atomic 재고 차감, 10 샤드로 Hot Spot 회피 (ADR-003)
-- 삼중 멱등성 방어: Server A `(user_id, idempotency_key) UNIQUE` + Server B Redis user-scoped 1차 캐시 + Server C `idempotency_key UNIQUE` (ADR-004 일관 적용)
+- 삼중 멱등성 방어: Server A `(user_id, idempotency_key) UNIQUE` + Server B Redis user-scoped 1차 캐시 + Server C `(user_id, idempotency_key) UNIQUE` + `code UNIQUE` (ADR-004 일관 적용)
 - Outbox poller + Kafka producer (`acks=all + enable.idempotence=true`) + Server C UNIQUE constraint = 의미적 exactly-once (ADR-002)
 - Bucket4j Lettuce backend, 사용자당 10 req/sec (ADR-005)
 - redeem 낙관적 락 (`@Version`), 비관 락 회피 (ADR-007)
@@ -141,9 +144,10 @@ done
 
 | PR | 내용 | 상태 |
 |---|---|---|
-| #14 | Server B Outbox poller + Kafka producer | in progress |
-| #15 | Server C Kafka consumer + UNIQUE 멱등성 | 예정 |
-| #16 | Server C Redeem API + 낙관적 락 | 예정 |
-| #17 | e2e k6 day3 시나리오 + run-integrated.sh 확장 | 예정 |
+| #14 | Server B Outbox poller + Kafka producer | merged |
+| #15 | docs(decisions): Server A batch insert / 백프레셔는 Day 4 부하 측정 후 결정 | merged |
+| #16 | Server C Kafka consumer + UNIQUE 멱등성 (V2 user-scoped 정합) | in progress |
+| #17 | Server C Redeem API + 낙관적 락 | 예정 |
+| #18 | e2e k6 day3 시나리오 + run-integrated.sh 확장 | 예정 |
 
 전체 5일 로드맵: [`CLAUDE.md` §12](./CLAUDE.md).

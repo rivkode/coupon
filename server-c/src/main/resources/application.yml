@@ -23,12 +23,59 @@ spring:
     enabled: true
     baseline-on-migrate: false
     locations: classpath:db/migration
+  # Kafka consumer (Server B 의 Outbox poller 가 발행한 coupon.issued 메시지 수신).
+  # ADR-002: at-least-once 발행 + UNIQUE constraint = 의미적 exactly-once.
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:29092}
+    consumer:
+      group-id: coupon-server-c
+      # 신규 group 부팅 시 가장 처음부터 (Outbox 적재된 모든 발급 이벤트 소비).
+      auto-offset-reset: earliest
+      # auto-commit 비활성 — Spring Kafka 가 RECORD ack-mode (아래 listener.ack-mode) 에 따라
+      # listener 정상 종료 시 record 단위로 offset commit. throw 발생 시 commit 안 됨 →
+      # DefaultErrorHandler 가 retry 처리.
+      enable-auto-commit: false
+      # transactional producer 는 본 과제 외이지만 정책 명시 — committed 메시지만 소비.
+      isolation-level: read_committed
+      # 1 vCPU 환경 — 한 번에 너무 많이 끌어오면 처리 시간 길어져 rebalance 위험.
+      max-poll-records: 10
+      properties:
+        max.poll.interval.ms: 300000
+        session.timeout.ms: 45000
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    listener:
+      # 메시지별 즉시 ack — 실패 메시지 단위 격리 (정합성 우선).
+      ack-mode: RECORD
+      type: SINGLE
+      # 1 vCPU 환경에선 컨텍스트 스위칭 비용 > 병렬성 이득. partition 3 개를 단일 consumer 가 처리.
+      # 트레이드오프: 단일 인스턴스 처리량 ≤ partition 1 개 단위 처리 속도. README 명시.
+      concurrency: 1
 
 server:
   port: 8082
+  shutdown: graceful
 
 management:
   endpoints:
     web:
       exposure:
         include: health, info, metrics, prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+      probes:
+        enabled: true
+
+logging:
+  pattern:
+    level: "%5p"
+  level:
+    root: INFO
+    com.promotion: INFO
+
+app:
+  kafka:
+    topic:
+      # Server B 의 application.yml 과 default 정합 — 동일 topic 이름 공유.
+      coupon-issued: ${KAFKA_TOPIC_COUPON_ISSUED:coupon.issued}

@@ -14,6 +14,11 @@ dependencies {
 	implementation("org.flywaydb:flyway-core")
 	implementation("org.flywaydb:flyway-mysql")
 
+	// Server B 의 Outbox poller 가 발행한 coupon.issued 메시지를 consume (CLAUDE.md ADR-002).
+	// at-least-once + (user_id, idempotency_key) UNIQUE 로 의미적 exactly-once.
+	implementation("org.springframework.kafka:spring-kafka")
+	testImplementation("org.springframework.kafka:spring-kafka-test")
+
 	implementation("io.micrometer:micrometer-registry-prometheus")
 }
 
