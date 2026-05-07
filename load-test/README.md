@@ -4,6 +4,8 @@
 동작 정확성을 assertion 으로 검증합니다. 부하 테스트가 아니라 기능 회귀 — VU 1 / iterations 1
 시나리오 11개 + 작은 burst 1개. (본격 1 vCPU 부하 / 사이징은 Day 4 의 별도 시나리오 영역.)
 
+> **자원 제약**: 평가 5축 ⑤ 의 전제는 각 서비스 **1 vCPU / 2 GB RAM**. docker compose 모드 (§1.2 권장) 가 컨테이너 단위로 자원 제약을 강제 — 사이징 / 부하 측정 결과의 신뢰성 확보. bootRun 모드는 빠른 개발용.
+
 ---
 
 ## 1. 사전 준비
@@ -19,21 +21,33 @@ k6 --version                     # v1.x 권장
 
 ### 1.2 인프라 + 세 서비스 모두 기동
 
+#### A. docker compose 모드 (**권장 — 자원 제약 강제**)
+
+각 서비스가 cpus=1.0 + mem_limit=2g 컨테이너로 실행. 사이징 / 부하 검증의 신뢰성 확보.
+
 ```bash
-# 인프라 (mysql + redis + kafka)
-docker compose up -d mysql redis kafka
+# bootJar 빌드 (호스트)
+./gradlew clean :server-a:bootJar :server-b:bootJar :server-c:bootJar -x test
 
-# server-b (local profile, port 8081)
+# 인프라 + 3 서비스 한 번에
+docker compose up -d --build
+
+# 모든 컨테이너 healthy 까지 ~30~60초 대기
+docker compose ps
+```
+
+#### B. bootRun 모드 (개발 편의 — 자원 제약 없음)
+
+코드 변경 후 빠른 검증용. 호스트 자원을 무제한 사용.
+
+```bash
+docker compose up -d mysql redis kafka                # 인프라만
 ./gradlew :server-b:bootRun --args='--spring.profiles.active=local' &
-
-# server-a (default profile, port 8080, RestClient 활성, base-url=8081)
 ./gradlew :server-a:bootRun &
-
-# server-c (default profile, port 8082, Kafka consumer 활성)
 ./gradlew :server-c:bootRun &
 ```
 
-기동 확인:
+#### 헬스 확인 (양쪽 모드 공통)
 
 ```bash
 curl -sS http://localhost:8080/actuator/health      # server-a UP

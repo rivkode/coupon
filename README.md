@@ -1,7 +1,6 @@
 # promotion
 
-5일 일정의 백엔드 채용 과제. **콘서트 사전 예매 할인 쿠폰 — 선착순 10,000장** 시나리오를
-1 vCPU / 2 GB RAM 노드 3대 (Server A / B / C) 로 처리하는 분산 시스템 구현입니다.
+**콘서트 사전 예매 할인 쿠폰 — 선착순 10,000장** 시나리오를 1 vCPU / 2 GB RAM 노드 3대 (Server A / B / C) 로 처리하는 분산 시스템 구현.
 
 핵심 명제: 인프라 제약을 **소프트웨어 (큐 + 비동기 + 백프레셔 + 분산 캐시)** 로 푼다.
 
@@ -32,18 +31,38 @@
 
 ---
 
-## 빠른 실행
+## 빠른 실행 (권장 — 자원 제약 강제)
+
+평가 5축 ⑤ (사이징) 의 전제인 **각 서비스 1 vCPU / 2 GB RAM** 을 컨테이너 단위로 강제. 부하 측정 / 사이징 검증의 신뢰성을 위해 본 모드로 실행 권장.
 
 ```bash
-docker compose up -d                                     # mysql + redis + kafka
-./gradlew clean build -x test
-./gradlew :server-b:bootRun --args='--spring.profiles.active=local' &
-./gradlew :server-a:bootRun &                            # default profile (RestClient → 8081)
-./gradlew :server-c:bootRun &                            # Kafka consumer 활성
+# 1) bootJar 빌드 (호스트에서)
+./gradlew clean :server-a:bootJar :server-b:bootJar :server-c:bootJar -x test
 
-# 검증 — 12개 e2e 시나리오
+# 2) 인프라 + 3 서비스 한 번에 부팅 (각 서비스 cpus=1 + mem=2g 강제)
+docker compose up -d --build
+
+# 3) 헬스 확인 (모두 UP 까지 ~30~60초)
+docker compose ps           # 모든 컨테이너 healthy
+curl -sS http://localhost:8080/actuator/health   # server-a
+curl -sS http://localhost:8081/actuator/health   # server-b
+curl -sS http://localhost:8082/actuator/health   # server-c
+
+# 4) 검증 — 12개 e2e 시나리오
 ./load-test/run-integrated.sh
 ```
+
+### 개발 편의 — bootRun 모드 (자원 제약 없음, 빠른 부팅)
+
+```bash
+docker compose up -d mysql redis kafka                   # 인프라만
+./gradlew :server-b:bootRun --args='--spring.profiles.active=local' &
+./gradlew :server-a:bootRun &
+./gradlew :server-c:bootRun &
+./load-test/run-integrated.sh
+```
+
+> bootRun 모드는 호스트 자원을 무제한 사용 — **사이징 / 부하 측정에는 부적합**. 코드 변경 후 빠른 검증용. 평가 시나리오 검증은 위의 docker compose 모드 사용.
 
 상세 절차 / 환경변수 / 트러블슈팅: [`load-test/README.md`](load-test/README.md)
 
@@ -133,7 +152,7 @@ docker compose up -d                                     # mysql + redis + kafka
 | #16 | Server C Kafka consumer + UNIQUE 멱등성 (V2 user-scoped 정합) | merged |
 | #17 | Server C Redeem API + 낙관적 락 (ADR-007) | merged |
 | #18 | e2e k6 day3 시나리오 + run-integrated.sh 확장 | merged |
-| #19 | docs: 평가자 가이드 + 시퀀스 + 장애 시나리오 + ADR 보강 | in progress |
+| #19 | docs: 평가자 가이드 + 시퀀스 + 장애 시나리오 + ADR 보강 + 컨테이너 자원 제약 (1 vCPU / 2 GB) | in progress |
 
 ### Day 4~5 — 부하 측정 + 사이징 (예정)
 

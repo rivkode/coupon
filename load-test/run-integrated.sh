@@ -74,7 +74,9 @@ for i in 1 2 3 4 5; do
 done
 
 # 6) 시나리오 일괄 실행. STOCK / WARMUP 을 day2-04 burst 에 명시 주입.
-SCENARIOS=(
+#    phase9 + day2-04 burst 가 Outbox 에 ~수백 건을 누적. day3 의 redeem 호출 전 server-c 가
+#    그것들을 모두 consume 해 영속할 때까지 대기 (cpus=1 환경에서 server-c 처리량 < producer rate).
+PHASE9_AND_BURST=(
     "load-test/scenarios/phase9-01-issue-success.js"
     "load-test/scenarios/phase9-02-idempotency.js"
     "load-test/scenarios/phase9-03-cross-user.js"
@@ -82,6 +84,8 @@ SCENARIOS=(
     "load-test/scenarios/phase9-05-missing-header.js"
     "load-test/scenarios/phase9-06-validation.js"
     "load-test/scenarios/day2-04-burst.js"
+)
+DAY3=(
     "load-test/scenarios/day3-01-redeem-success.js"
     "load-test/scenarios/day3-02-redeem-idempotent.js"
     "load-test/scenarios/day3-03-redeem-ownership-mask.js"
@@ -89,21 +93,65 @@ SCENARIOS=(
     "load-test/scenarios/day3-05-redeem-missing-header.js"
 )
 
+run_scenarios() {
+    local label="$1"; shift
+    local list=("$@")
+    for s in "${list[@]}"; do
+        echo "=========================================="
+        echo "  [$label] Running: $s"
+        echo "=========================================="
+        if ! k6 run \
+            -e "BASE_URL=$BASE_URL" \
+            -e "SERVER_C_BASE_URL=$SERVER_C_BASE_URL" \
+            -e "STOCK=$TOTAL_STOCK" \
+            -e "WARMUP=$WARMUP" \
+            "$s"; then
+            FAILED+=("$s")
+        fi
+        echo
+    done
+}
+
 FAILED=()
-for s in "${SCENARIOS[@]}"; do
-    echo "=========================================="
-    echo "  Running: $s"
-    echo "=========================================="
-    if ! k6 run \
-        -e "BASE_URL=$BASE_URL" \
-        -e "SERVER_C_BASE_URL=$SERVER_C_BASE_URL" \
-        -e "STOCK=$TOTAL_STOCK" \
-        -e "WARMUP=$WARMUP" \
-        "$s"; then
-        FAILED+=("$s")
+run_scenarios "phase9+burst" "${PHASE9_AND_BURST[@]}"
+
+# 6-A) day3 시작 전 server-c consume catchup 대기.
+#     outbox.published=true 행 수 == server_c.coupon 행 수 가 될 때까지 polling.
+#     cpus=1 환경에선 day2-04 burst 의 ~100건이 서버 시작 후 ~10~30초에 걸쳐 consume 됨.
+echo "=========================================="
+echo "  Waiting for server-c consume catchup before day3 ..."
+echo "=========================================="
+for i in $(seq 1 60); do
+    OUTBOX_PUB=$(docker exec promotion-mysql mysql -upromotion -ppromotion server_b -N \
+        -e "SELECT COUNT(*) FROM coupon_issue_outbox WHERE published=1" 2>/dev/null || echo 0)
+    COUPON_CNT=$(docker exec promotion-mysql mysql -upromotion -ppromotion server_c -N \
+        -e "SELECT COUNT(*) FROM coupon" 2>/dev/null || echo 0)
+    if [[ "$OUTBOX_PUB" == "$COUPON_CNT" && "$OUTBOX_PUB" != "0" ]]; then
+        echo "  caught up: outbox.published=$OUTBOX_PUB == server_c.coupon=$COUPON_CNT"
+        break
     fi
-    echo
+    echo "  outbox.published=$OUTBOX_PUB server_c.coupon=$COUPON_CNT (waiting ${i}s)"
+    sleep 1
 done
+
+# 6-B) CB recovery — day2-04 burst 가 server-a 의 Resilience4j sliding-window 를 OPEN 시킬 수 있어
+#     day3 발급 호출이 즉시 503 받는 케이스. 정상 호출 N 번으로 sliding-window 재정상화.
+echo "=========================================="
+echo "  Server-a CB warmup before day3 ..."
+echo "=========================================="
+for i in 1 2 3 4 5 6 7 8 9 10; do
+    KEY=$(uuidgen)
+    HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+        -X POST "$BASE_URL/api/v1/coupons/issue-requests" \
+        -H "X-User-Id: $((950000 + i))" \
+        -H "Idempotency-Key: $KEY" \
+        -H "Content-Type: application/json" \
+        -d "{\"eventId\":$EVENT_ID,\"deviceId\":\"warmup-d3\",\"channel\":\"WEB\",\"requestedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"clientVersion\":\"1\",\"region\":\"KR\",\"language\":\"ko\",\"marketingConsent\":true}")
+    echo "  warmup-d3 $i: $HTTP_STATUS"
+    sleep 0.3
+done
+
+run_scenarios "day3" "${DAY3[@]}"
 
 # 7) 사후 검증 — Outbox 행 수 + server_c.coupon 행 수.
 #    Outbox = warmup curl + phase9-01..04 의 SUCCEEDED + day2-04 의 SUCCEEDED + day3 발급분.
