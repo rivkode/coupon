@@ -231,12 +231,44 @@ server-c consumer 상태를 확인.
 
 ---
 
-## 7. 본격 부하 / 사이징 (Day 4 영역)
+## 7. Day 4 부하 측정 (Phase B)
 
-본 디렉토리는 정합성 회귀가 목적. 실제 1 vCPU / 10,000 TPS 부하 측정 + 인스턴스 사이징은
-Day 4 시점의 별도 시나리오 (`smoke.js` / `load.js` / `spike.js`) 에서 다룹니다 —
-`capacity-planning` 스킬 + `system-design-reviewer` 가 검증.
+CLAUDE.md §2 의 실제 트래픽 시나리오 (1,000 사용자 × 10초 × 100건 = 10,000 TPS) 와 인스턴스당
+budget (500~1,000 TPS) 검증을 위한 4 시나리오. 결과 + 결정은
+[`../docs/reports/01.load-test-results.md`](../docs/reports/01.load-test-results.md) 에 정리.
 
-부하 시 관측: `http://localhost:3000` (Grafana, admin/admin) 의 **Promotion Overview** 대시보드 5 패널
-(JVM heap / CPU / HTTP p95 / HikariCP active / Tomcat busy) 가 server-a/b/c 오버레이로 표시됩니다.
-시나리오 종료 후 retention 2h 동안 시계열 보존 — `docs/reports/01.load-test-results.md` 작성 시 캡처.
+### 7.1 시나리오 매핑
+
+| 파일 | 부하 | 의도 |
+|---|---|---|
+| `day4-smoke.js` | 1 VU × 60s | baseline — 정상 상태의 p95/CPU/HikariCP |
+| `day4-per-instance.js` | 100 VU × 3min (~1,000 TPS) | CLAUDE.md §2 인스턴스당 budget 상단 검증 |
+| `day4-real-scenario.js` | 1,000 VU × 100 reqs (10,000 TPS) | CLAUDE.md §2 시스템 전체 부하 — 호스트 networking 한계 측정 (보고서 §3.3) |
+| `day4-spike.js` | 0→500 VU 10s ramp + 10s steady | burst 흡수 (CB 백프레셔) 검증 |
+
+### 7.2 일괄 실행
+
+```bash
+./load-test/run-day4.sh
+```
+
+스크립트가 수행하는 일:
+1. **사전 헬스 체크** — server-a/b/c + Prometheus
+2. **시나리오별 reseed** — Redis FLUSHDB + MySQL truncate + stock 10,000 seed
+3. **CB warmup** — cold start 의 read-timeout 200ms 함정 회피
+4. **시나리오 4종 순차 실행**
+5. **각 시나리오 후 metric snapshot** — process_cpu / heap / hikaricp / tomcat / http p95
+
+### 7.3 부하 시 관측
+
+- `http://localhost:3000` (Grafana, admin/admin) 의 **Promotion Overview** 대시보드 5 패널
+- 5s 단위 자동 갱신 — k6 실행 중 실시간 그래프 변화
+- retention 24h — 시나리오 종료 후 캡처 / 분석 가능
+- Prometheus 직접 쿼리: `max_over_time(metric[30m])` 으로 시나리오 전체 기간 peak
+
+### 7.4 호스트 한계 — 1,000 VU 측정의 주의점
+
+`day4-real-scenario.js` 는 1,000 VU 동시 시작 → 1초 안에 10,000 TCP connection. 1 macOS host
++ colima 환경에서는 host fd / connection backlog 한계로 docker daemon 응답 불가 진입 가능.
+운영 측정은 분산 worker (k6 cloud / 별도 호스트) 필수. 본 과제는 1 host baseline 측정 +
+보고서에 호스트 한계 명시 (보고서 §3.3).

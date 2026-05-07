@@ -18,7 +18,7 @@
 | ② | 분산 정합성 + 멱등성 | Saga + Outbox + UNIQUE 3 단계 | `server-b/.../OutboxPoller`, `server-c/.../CouponConsumer` | [outbox-mysql-vs-redis-streams](docs/decisions/outbox-mysql-vs-redis-streams.md), [server-b-outbox-poller-kafka](docs/decisions/server-b-outbox-poller-kafka.md) | `day3-01..04` |
 | ③ | Hot Spot 회피 | Redis 재고 10 샤드 + Lua atomic | `server-b/.../RedisStockClient`, `issue-coupon.lua` | [`04.Data-Stores`](docs/architecture/04.Data-Stores.md) §3 | (Phase B 측정) |
 | ④ | Rate Limit / Backpressure | Bucket4j Lettuce + Resilience4j CB | `server-a/.../RateLimitFilter`, `CouponIssuingRestClient` | CLAUDE.md ADR-005 | `phase9-04-rate-limit.js` |
-| ⑤ | 인프라 사이징 | k6 부하 + Little's Law + Grafana (Phase A 도입) | (Phase B) | [server-a-tuning](docs/decisions/server-a-tuning-load-test-driven.md) | (Phase B) |
+| ⑤ | 인프라 사이징 | k6 부하 + Little's Law + Grafana | [Day 4 측정 보고서](docs/reports/01.load-test-results.md) | [server-a-tuning](docs/decisions/server-a-tuning-load-test-driven.md) | `day4-{smoke,per-instance,real-scenario,spike}.js` |
 
 ### 2) 가장 보고싶은 부분만 빨리 보기
 
@@ -97,7 +97,7 @@ docker compose up -d mysql redis kafka                   # 인프라만
 통합 e2e 검증 절차 (12 시나리오) 는 [`load-test/README.md`](load-test/README.md) 가 단일 진실. runbook 으로 분리하지 않음 (한 곳에서 관리).
 
 ### 보고서 (`docs/reports/`)
-- 부하 테스트 결과 (Day 4 작성 예정)
+- [01. 부하 테스트 결과 (Day 4)](docs/reports/01.load-test-results.md) — 4 시나리오 측정 + Phase C 결정 + Day 5 입력
 - 100,000명 사이징 계산 (Day 5 작성 예정)
 
 ### 분석 / 기획
@@ -160,7 +160,15 @@ docker compose up -d mysql redis kafka                   # 인프라만
 | #18 | e2e k6 day3 시나리오 + run-integrated.sh 확장 | merged |
 | #19 | docs: 평가자 가이드 + 시퀀스 + 장애 시나리오 + ADR 보강 + 컨테이너 자원 제약 (1 vCPU / 2 GB) | in progress |
 
-### Day 4~5 — 부하 측정 + 사이징 (예정)
+### Day 4 — 관측성 + 부하 측정 (Phase A / B 완료, Phase C 결정됨)
 
-- 1 vCPU 부하 측정 (smoke / load / stress / spike) + Server A 튜닝 결정 (batch insert / 백프레셔)
-- Little's Law 기반 100,000명 사이징 계산
+| PR | Phase | 내용 | 상태 |
+|---|---|---|---|
+| #20 | A | Prometheus + Grafana 인프라 + 5 패널 대시보드 | merged |
+| #21 | B | 4 k6 시나리오 + 측정 보고서 + Phase C GO 결정 | in progress |
+| #22 | C | batch insert 도입 (조건부 — Phase B 결과로 GO) | planned |
+
+### Day 5 — 100,000명 사이징 (예정)
+
+- Phase C 후 재측정 → Little's Law 기반 인스턴스 수 산출
+- Redis / MySQL / Kafka 사이징
