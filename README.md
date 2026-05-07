@@ -81,6 +81,7 @@ done
 - **유령 재고 (B JVM 크래시)**: Lua ISSUED 직후 / Outbox INSERT 직전에 크래시 시 Redis 차감 + MySQL 미INSERT. reconciliation job 미구현 — 프로덕션 진화 방향.
 - **운영 Stock 분배 endpoint 없음**: `StockSeeder` 빈은 테스트 setup 용. 운영에서는 별도 admin endpoint 또는 cli 도구 필요.
 - **Cold start CB OPEN 가능성**: 첫 호출이 read-timeout 200ms 를 초과할 수 있음. `run-integrated.sh` 가 명시적 warmup curl 로 sliding-window 정상화 후 main 시나리오 시작.
+- **Server A 의 요청 로그 batch insert / 명시적 백프레셔 미적용 (Day 4 측정 후 결정)**: CLAUDE.md §3 평가 ① / ADR-005 가 권고하나 "감으로" 도입하지 않는다. Day 4 의 k6 부하 측정으로 병목을 정량 식별한 뒤 도입 여부 + 구현 형태를 결정 — 근거: [`docs/decisions/server-a-tuning-load-test-driven.md`](docs/decisions/server-a-tuning-load-test-driven.md).
 
 ## 실행 정보
 
