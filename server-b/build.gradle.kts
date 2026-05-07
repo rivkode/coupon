@@ -18,6 +18,11 @@ dependencies {
 	implementation("org.flywaydb:flyway-core")
 	implementation("org.flywaydb:flyway-mysql")
 
+	// Outbox poller → Kafka 발행 (CLAUDE.md ADR-002). Producer idempotence (acks=all)
+	// + Server C UNIQUE constraint 로 의미적 exactly-once.
+	implementation("org.springframework.kafka:spring-kafka")
+	testImplementation("org.springframework.kafka:spring-kafka-test")
+
 	implementation("io.micrometer:micrometer-registry-prometheus")
 }
 

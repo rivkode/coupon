@@ -25,6 +25,20 @@ public interface CouponIssueOutboxRepository {
      */
     List<CouponIssueOutbox> findUnpublished(int limit);
 
+    /**
+     * poller 가 미발행 행을 row lock + SKIP LOCKED 로 batch 조회.
+     *
+     * <p>MySQL 8.0+ 의 {@code FOR UPDATE SKIP LOCKED} 로 동시에 도는 두 SELECT 가 같은 행을
+     * 동시에 잡지 않게 함. 단, **lock 은 호출 트랜잭션 종료 시 해제**되므로 publish/markPublished
+     * 를 별도 트랜잭션으로 분리한 OutboxPoller 의 흐름에서는 SKIP LOCKED 가 "동시 SELECT 직렬화"
+     * 정도만 보장. 진짜 동시 발행 방어 (lock 해제 후 다른 인스턴스가 같은 행을 다시 SELECT
+     * 하는 경우) 는 Server C 의 UNIQUE constraint 가 권위 (CLAUDE.md ADR-004 / PR #15).
+     *
+     * <p>본 메서드를 트랜잭션 안에서 호출해야 native lock 이 의미가 있다. Kafka publish 는
+     * 트랜잭션 밖에서 수행 (CLAUDE.md §10 안티패턴 회피). OutboxPoller 가 두 단계로 분리한다.
+     */
+    List<CouponIssueOutbox> findUnpublishedForUpdate(int limit);
+
     /** Outbox 전체 행 수 — 모니터링 / 통합 테스트 검증 용도. */
     long count();
 

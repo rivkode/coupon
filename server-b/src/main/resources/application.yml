@@ -40,6 +40,29 @@ spring:
           max-idle: 12
           min-idle: 4
           max-wait: 500ms
+  # Kafka producer (Outbox poller 가 사용). docker-compose 의 host listener (29092).
+  # ADR-002: Outbox + at-least-once 발행 + Consumer 멱등성 = 의미적 exactly-once.
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:29092}
+    # KafkaAdmin 이 부팅 시 NewTopic 빈 처리. broker 가 없을 때 default 30s 대기 → 짧게.
+    admin:
+      operation-timeout: 5s
+      fail-fast: false
+    producer:
+      # 정합성 우선 — leader + ISR 모두 ack. broker 1 대 환경에선 leader 만이지만 정책 명시.
+      acks: all
+      # broker 측 dedup 으로 retry 시 중복 발행 차단 (idempotent producer).
+      # max.in.flight=5 까지 호환 (Kafka 2.0+).
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
+        delivery.timeout.ms: 30000
+        request.timeout.ms: 5000
+        linger.ms: 5
+        compression.type: lz4
+      retries: 5
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
 
 server:
   # A→B sync 호출 (ADR-001) 의 endpoint. server-a 의 app.server-b.base-url 과 정합.
@@ -73,3 +96,23 @@ app:
     ttl-seconds: ${COUPON_ISSUE_TTL_SECONDS:86400}
     # CouponCode 충돌 (확률 ~ 0) 발생 시 새 코드로 재시도 횟수.
     code-collision-max-retries: ${COUPON_CODE_COLLISION_MAX_RETRIES:3}
+  # Outbox poller (CLAUDE.md ADR-002). 단일 인스턴스 운영 가정 + SKIP LOCKED 안전망.
+  outbox:
+    poller:
+      # 발행 cycle 간격. 200ms 면 server-a → server-b sync (200ms timeout) 와 정합 —
+      # 사용자 응답 직후 평균 1 cycle 안에 Kafka 발행 완료.
+      fixed-delay-ms: ${OUTBOX_POLLER_FIXED_DELAY_MS:200}
+      # cycle 당 batch 크기. 너무 크면 한 트랜잭션이 길어짐.
+      batch-size: ${OUTBOX_POLLER_BATCH_SIZE:100}
+      # 부팅 직후 첫 cycle 까지의 지연. health 가 안정된 뒤 첫 발행 — DB / Redis connection
+      # warmup 완료 후 cycle 시작. IT 가 본 값을 1시간으로 override 하여 자동 cycle 비활성화.
+      initial-delay-ms: ${OUTBOX_POLLER_INITIAL_DELAY_MS:5000}
+      # 발행 1건 timeout — KafkaTemplate.send().get(timeout). request.timeout.ms 보다 짧게.
+      send-timeout-ms: ${OUTBOX_POLLER_SEND_TIMEOUT_MS:3000}
+  kafka:
+    topic:
+      # ADR-002 의 발행 topic. partitions=3 (단일 broker 환경 + userId key 분산),
+      # replication factor=1 (KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 정합).
+      coupon-issued: ${KAFKA_TOPIC_COUPON_ISSUED:coupon.issued}
+      coupon-issued-partitions: ${KAFKA_TOPIC_COUPON_ISSUED_PARTITIONS:3}
+      coupon-issued-replication-factor: ${KAFKA_TOPIC_COUPON_ISSUED_RF:1}
