@@ -105,6 +105,7 @@ done
 - A→B 동기 + B→C 비동기로 즉시 응답 + 영구 저장 분리 (ADR-001)
 - Redis Lua 기반 atomic 재고 차감, 10 샤드로 Hot Spot 회피 (ADR-003)
 - 삼중 멱등성 방어: Server A `(user_id, idempotency_key) UNIQUE` + Server B Redis user-scoped 1차 캐시 + Server C `idempotency_key UNIQUE` (ADR-004 일관 적용)
+- Outbox poller + Kafka producer (`acks=all + enable.idempotence=true`) + Server C UNIQUE constraint = 의미적 exactly-once (ADR-002)
 - Bucket4j Lettuce backend, 사용자당 10 req/sec (ADR-005)
 - redeem 낙관적 락 (`@Version`), 비관 락 회피 (ADR-007)
 
@@ -131,6 +132,17 @@ done
 | #8  | Server B 부트스트랩 + Outbox 인프라 | merged |
 | #9  | docs(decisions): Outbox 전략 결정 근거 | merged |
 | #10 | Redis Lua atomic 발급 + 보상 트랜잭션 + 동시성 IT | merged |
-| #11 | A↔B 실통합 (`base-url` 정정) + Stub SOLD_OUT hook + k6 day2 4 시나리오 | in progress |
+| #11 | A↔B 실통합 (`base-url` 정정) + Stub SOLD_OUT hook + k6 day2 4 시나리오 | merged |
+| #12 | Server B idempotency 캐시/Outbox UNIQUE user-scoped (ADR-004 정합) | merged |
+| #13 | Server A 핵심 로직 단위 테스트 보강 (44 cases) | merged |
+
+### Day 3 — Server C + Outbox/Saga (진행 중)
+
+| PR | 내용 | 상태 |
+|---|---|---|
+| #14 | Server B Outbox poller + Kafka producer | in progress |
+| #15 | Server C Kafka consumer + UNIQUE 멱등성 | 예정 |
+| #16 | Server C Redeem API + 낙관적 락 | 예정 |
+| #17 | e2e k6 day3 시나리오 + run-integrated.sh 확장 | 예정 |
 
 전체 5일 로드맵: [`CLAUDE.md` §12](./CLAUDE.md).

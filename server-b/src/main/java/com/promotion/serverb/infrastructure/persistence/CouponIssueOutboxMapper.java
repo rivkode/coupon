@@ -2,10 +2,9 @@ package com.promotion.serverb.infrastructure.persistence;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.promotion.common.coupon.CouponCode;
+import com.promotion.serverb.application.CouponIssuedEventPayload;
 import com.promotion.serverb.domain.CouponIssueOutbox;
 import com.promotion.serverb.domain.CouponIssuedEvent;
-import java.time.Instant;
 
 /**
  * Domain ↔ JpaEntity 양방향 변환. JSON 직렬화도 본 mapper 가 담당 — 도메인은 형식을 모른다.
@@ -48,13 +47,7 @@ final class CouponIssueOutboxMapper {
 
     private static String serialize(CouponIssuedEvent event, ObjectMapper objectMapper) {
         try {
-            return objectMapper.writeValueAsString(new EventDto(
-                event.eventId(),
-                event.userId(),
-                event.couponCode().value(),
-                event.idempotencyKey(),
-                event.issuedAt()
-            ));
+            return objectMapper.writeValueAsString(CouponIssuedEventPayload.of(event));
         } catch (JsonProcessingException e) {
             // record 직렬화는 정상적으론 실패 불가 — 발생 시 시스템 결함.
             throw new IllegalStateException("outbox payload serialization failed", e);
@@ -63,28 +56,9 @@ final class CouponIssueOutboxMapper {
 
     private static CouponIssuedEvent deserialize(String payload, ObjectMapper objectMapper) {
         try {
-            EventDto dto = objectMapper.readValue(payload, EventDto.class);
-            return new CouponIssuedEvent(
-                dto.eventId(),
-                dto.userId(),
-                new CouponCode(dto.couponCode()),
-                dto.idempotencyKey(),
-                dto.issuedAt()
-            );
+            return objectMapper.readValue(payload, CouponIssuedEventPayload.class).toDomain();
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("outbox payload deserialization failed", e);
         }
     }
-
-    /**
-     * JSON 직렬화 형식을 명시적으로 분리. CouponCode 는 String 으로, Instant 는 ISO-8601 으로
-     * (Spring Boot 의 ObjectMapper 가 JavaTimeModule + WRITE_DATES_AS_TIMESTAMPS 비활성).
-     */
-    private record EventDto(
-        long eventId,
-        long userId,
-        String couponCode,
-        String idempotencyKey,
-        Instant issuedAt
-    ) {}
 }

@@ -53,6 +53,16 @@ class CouponIssueOutboxRepositoryImpl implements CouponIssueOutboxRepository {
     }
 
     @Override
+    public List<CouponIssueOutbox> findUnpublishedForUpdate(int limit) {
+        if (limit <= 0) {
+            throw new IllegalArgumentException("limit must be positive: " + limit);
+        }
+        return jpaRepository.findUnpublishedForUpdate(limit).stream()
+            .map(e -> CouponIssueOutboxMapper.toDomain(e, objectMapper))
+            .toList();
+    }
+
+    @Override
     public long count() {
         return jpaRepository.count();
     }
