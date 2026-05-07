@@ -68,8 +68,7 @@ services:
     image: provectuslabs/kafka-ui:latest
     container_name: promotion-kafka-ui
     ports:
-      # 호스트 포트 8081 은 server-b application.yml 이 점유 (A→B sync 호출 endpoint).
-      # Kafka UI 는 8085 로 이전.
+      # 호스트 포트 8081 은 server-b 가 점유 (A→B sync 호출 endpoint). Kafka UI 는 8085.
       - "8085:8080"
     environment:
       KAFKA_CLUSTERS_0_NAME: local
@@ -78,6 +77,109 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+    networks:
+      - promotion-net
+
+  # ─────────────────────────────────────────────────────────────────────
+  # 애플리케이션 서비스 — 평가 5축 ⑤ (사이징) 의 전제 조건인 1 vCPU / 2 GB 자원 제약을
+  # 컨테이너 단위로 강제 (CLAUDE.md §2). 동일 호스트에서 부하를 측정해도 각 서비스가
+  # cpus=1 + mem=2g 이하만 사용하므로 측정 결과가 평가 시나리오와 정합.
+  #
+  # JVM: -XX:+UseContainerSupport (Java 21 default true) + MaxRAMPercentage=70 →
+  #      heap ~1.4 GB + OS/native ~600 MB. G1GC 로 1 vCPU 환경의 latency 안정화.
+  # 빌드: 호스트에서 ./gradlew :server-X:bootJar 후 docker compose up.
+  # ─────────────────────────────────────────────────────────────────────
+
+  server-a:
+    build:
+      context: .
+      dockerfile: server-a/Dockerfile
+    image: promotion-server-a:local
+    container_name: promotion-server-a
+    cpus: 1.0
+    mem_limit: 2g
+    mem_reservation: 1g
+    ports:
+      - "8080:8080"
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      SERVER_B_URL: http://server-b:8081
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q UP || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 15
+      start_period: 30s
+    networks:
+      - promotion-net
+
+  server-b:
+    build:
+      context: .
+      dockerfile: server-b/Dockerfile
+    image: promotion-server-b:local
+    container_name: promotion-server-b
+    cpus: 1.0
+    mem_limit: 2g
+    mem_reservation: 1g
+    ports:
+      - "8081:8081"
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      KAFKA_BOOTSTRAP: kafka:9092
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/actuator/health | grep -q UP || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 15
+      start_period: 30s
+    networks:
+      - promotion-net
+
+  server-c:
+    build:
+      context: .
+      dockerfile: server-c/Dockerfile
+    image: promotion-server-c:local
+    container_name: promotion-server-c
+    cpus: 1.0
+    mem_limit: 2g
+    mem_reservation: 1g
+    ports:
+      - "8082:8082"
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      KAFKA_BOOTSTRAP: kafka:9092
+    depends_on:
+      mysql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8082/actuator/health | grep -q UP || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 15
+      start_period: 30s
     networks:
       - promotion-net
 
