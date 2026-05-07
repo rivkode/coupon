@@ -236,3 +236,7 @@ server-c consumer 상태를 확인.
 본 디렉토리는 정합성 회귀가 목적. 실제 1 vCPU / 10,000 TPS 부하 측정 + 인스턴스 사이징은
 Day 4 시점의 별도 시나리오 (`smoke.js` / `load.js` / `spike.js`) 에서 다룹니다 —
 `capacity-planning` 스킬 + `system-design-reviewer` 가 검증.
+
+부하 시 관측: `http://localhost:3000` (Grafana, admin/admin) 의 **Promotion Overview** 대시보드 5 패널
+(JVM heap / CPU / HTTP p95 / HikariCP active / Tomcat busy) 가 server-a/b/c 오버레이로 표시됩니다.
+시나리오 종료 후 retention 2h 동안 시계열 보존 — `docs/reports/01.load-test-results.md` 작성 시 캡처.

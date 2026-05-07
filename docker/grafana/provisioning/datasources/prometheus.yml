@@ -1,0 +1,16 @@
+# Grafana datasource provisioning — Prometheus 자동 등록.
+# Grafana 부팅 시 본 파일을 읽어 default datasource 로 Prometheus 를 연결.
+# 평가자는 별도 설정 없이 http://localhost:3000 접속 → 즉시 대시보드 진입.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 5s

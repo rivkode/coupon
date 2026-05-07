@@ -33,7 +33,7 @@
 |---|---|---|
 | **분산 트레이싱** | Day 4 부하 측정 + 사이징의 핵심 영역이 아님. MDC traceId 만 적용. | OpenTelemetry + Jaeger / Tempo |
 | **구조화된 로깅 / 중앙 수집** | local 개발 / k6 검증 위주. 평가자가 grep 으로 추적 가능. | ELK / Loki + JSON 로그 |
-| **Grafana 대시보드** | actuator/prometheus endpoint 만 노출. Day 4 측정 시 ad-hoc 활용. | 운영 — Grafana + Alert Manager |
+| **Grafana 대시보드** | **PR #20 에서 인프라 도입** — docker-compose 에 Prometheus + Grafana 통합, 5 패널 (JVM heap / CPU / HTTP p95 / HikariCP / Tomcat busy) 자동 provisioning. Phase B 부하 측정 결과 캡처용. | 운영 — Alert Manager + multi-cluster + 분산 트레이싱 (Loki / Tempo) |
 | **GitHub Actions CI** | 5일 일정 + 1인 작업이라 PR 수동 검증 (`./gradlew test`). | 다중 작업자 진입 시 즉시 도입 |
 | **Helm / Kustomize** | docker-compose 만 제공. K8s 배포는 본 과제 외. | 운영 환경 진입 시 |
 
@@ -45,6 +45,7 @@
 | **HTTPS / TLS** | local 환경. 운영에서는 ALB / Ingress 가 종료. | nginx + Let's Encrypt 또는 ALB |
 | **Rate Limit redeem** | server-c 직접 호출이라 server-a 의 Bucket4j 미적용. 본 과제 트래픽 모델이 발급 burst 위주. | redeem 도 server-a 라우팅 또는 별도 rate limit |
 | **WAF / DDoS** | 인프라 영역, 본 과제 외. | CloudFront / Cloudflare |
+| **Grafana / 관측 도구 자격 증명** | local 평가 가정 — `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD` 환경변수로 override 가능 (default admin/admin). | 운영 — Secret Manager (AWS / Vault) + SSO 통합 |
 
 ## 5. 데이터 / 마이그레이션
 

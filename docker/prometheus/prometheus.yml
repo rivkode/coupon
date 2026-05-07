@@ -1,0 +1,46 @@
+# Prometheus 설정 — Day 4 부하 측정용
+#
+# scrape interval 5s: k6 부하 시 5초 단위 시계열로 병목 식별 충분.
+# retention: 컨테이너 시작 flag 로 2h (docker-compose 의 --storage.tsdb.retention.time=2h).
+# targets: server-a/b/c + self. 모든 application 은 actuator 가 노출하는 /actuator/prometheus.
+
+global:
+  scrape_interval: 5s
+  scrape_timeout: 4s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: promotion-local
+
+scrape_configs:
+  # self-scrape — Prometheus 자체 메트릭 (rule eval / TSDB 상태). 다른 target 과 동일하게
+  # docker-compose service name 으로 통일 — promotion-net 안에서 해석.
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - prometheus:9090
+        labels:
+          application: prometheus
+
+  - job_name: server-a
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets:
+          - server-a:8080
+        labels:
+          application: server-a
+
+  - job_name: server-b
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets:
+          - server-b:8081
+        labels:
+          application: server-b
+
+  - job_name: server-c
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets:
+          - server-c:8082
+        labels:
+          application: server-c

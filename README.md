@@ -14,11 +14,11 @@
 
 | # | 평가 항목 | 핵심 기법 | 코드 위치 | 결정 문서 | k6 검증 |
 |---|---|---|---|---|---|
-| ① | 대량 트래픽 + 동시성 | HikariCP, batch insert (Day 4 결정) | `server-a/.../IssueRequestService` | [server-a-tuning](docs/decisions/server-a-tuning-load-test-driven.md) | `day2-04-burst.js` |
+| ① | 대량 트래픽 + 동시성 | HikariCP, batch insert (Phase C 조건부 결정) | `server-a/.../IssueRequestService` | [server-a-tuning](docs/decisions/server-a-tuning-load-test-driven.md) | `day2-04-burst.js` |
 | ② | 분산 정합성 + 멱등성 | Saga + Outbox + UNIQUE 3 단계 | `server-b/.../OutboxPoller`, `server-c/.../CouponConsumer` | [outbox-mysql-vs-redis-streams](docs/decisions/outbox-mysql-vs-redis-streams.md), [server-b-outbox-poller-kafka](docs/decisions/server-b-outbox-poller-kafka.md) | `day3-01..04` |
-| ③ | Hot Spot 회피 | Redis 재고 10 샤드 + Lua atomic | `server-b/.../RedisStockClient`, `issue-coupon.lua` | [`04.Data-Stores`](docs/architecture/04.Data-Stores.md) §3 | (Day 4 측정) |
+| ③ | Hot Spot 회피 | Redis 재고 10 샤드 + Lua atomic | `server-b/.../RedisStockClient`, `issue-coupon.lua` | [`04.Data-Stores`](docs/architecture/04.Data-Stores.md) §3 | (Phase B 측정) |
 | ④ | Rate Limit / Backpressure | Bucket4j Lettuce + Resilience4j CB | `server-a/.../RateLimitFilter`, `CouponIssuingRestClient` | CLAUDE.md ADR-005 | `phase9-04-rate-limit.js` |
-| ⑤ | 인프라 사이징 | k6 부하 + Little's Law | (Day 4) | [server-a-tuning](docs/decisions/server-a-tuning-load-test-driven.md) | (Day 4) |
+| ⑤ | 인프라 사이징 | k6 부하 + Little's Law + Grafana (Phase A 도입) | (Phase B) | [server-a-tuning](docs/decisions/server-a-tuning-load-test-driven.md) | (Phase B) |
 
 ### 2) 가장 보고싶은 부분만 빨리 보기
 
@@ -50,6 +50,11 @@ curl -sS http://localhost:8082/actuator/health   # server-c
 
 # 4) 검증 — 12개 e2e 시나리오
 ./load-test/run-integrated.sh
+
+# 5) (Day 4) 관측성 — Grafana 대시보드
+#    http://localhost:3000  (admin/admin) → 좌측 메뉴 Dashboards → Promotion 폴더 → "Promotion Overview"
+#    JVM heap / CPU / HTTP p95 / HikariCP active / Tomcat busy 5 패널 (server-a/b/c 오버레이)
+#    Prometheus 원본: http://localhost:9090
 ```
 
 ### 개발 편의 — bootRun 모드 (자원 제약 없음, 빠른 부팅)
@@ -114,7 +119,8 @@ docker compose up -d mysql redis kafka                   # 인프라만
 | Redis | `:6379` | — |
 | Kafka | `:9092` (INTERNAL) / `:29092` (HOST) | — |
 | Kafka UI | `http://localhost:8085` | — |
-| Prometheus | 각 서비스 `/actuator/prometheus` | — |
+| Prometheus | `http://localhost:9090` (각 서비스 `/actuator/prometheus` scrape) | — |
+| Grafana | `http://localhost:3000` (admin/admin, "Promotion Overview" 자동 로드) | — |
 
 ---
 
