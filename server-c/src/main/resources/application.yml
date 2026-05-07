@@ -55,6 +55,11 @@ spring:
 server:
   port: 8082
   shutdown: graceful
+  tomcat:
+    mbeanregistry:
+      # tomcat_threads_busy / config_max metric 노출 (Spring Boot 기본 OFF — JMX 등록 비용 회피).
+      # Day 4 Grafana 패널 측정 목적. 부팅 시 1회 mbean 등록 — 런타임 overhead 무시할 수준.
+      enabled: true
 
 management:
   endpoints:
@@ -66,6 +71,12 @@ management:
       show-details: when-authorized
       probes:
         enabled: true
+  metrics:
+    distribution:
+      percentiles-histogram:
+        # http_server_requests_seconds_bucket 노출 — Prometheus histogram_quantile 가능 (p95 패널).
+        # Trade-off: bucket 시리즈 폭증 위험은 endpoint 가 많은 서비스 영역 — 본 과제는 1~2 endpoint 라 안전.
+        http.server.requests: true
 
 logging:
   pattern:

@@ -1,0 +1,18 @@
+# Grafana dashboard provider — 컨테이너 안의 /etc/grafana/dashboards 디렉토리에 있는
+# JSON 파일을 자동으로 대시보드로 로드.
+# updateIntervalSeconds=10 으로 두면 운영 진화 시 dashboard JSON 핫 리로드 가능.
+
+apiVersion: 1
+
+providers:
+  - name: promotion-overview
+    orgId: 1
+    folder: Promotion
+    type: file
+    # provisioning 파일이 단일 진실 — UI 우발 수정/삭제 차단으로 측정 일관성 보장.
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 10
+    options:
+      path: /etc/grafana/dashboards
+      foldersFromFilesStructure: false
