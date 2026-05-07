@@ -29,3 +29,11 @@ export function buildHeaders(userId, idempotencyKey = uuidv4()) {
 export function newIdempotencyKey() {
     return uuidv4();
 }
+
+/** Redeem 요청 헤더. body 없음, Content-Type 불필요. */
+export function buildRedeemHeaders(userId, idempotencyKey = uuidv4()) {
+    return {
+        'X-User-Id': String(userId),
+        'Idempotency-Key': idempotencyKey,
+    };
+}
