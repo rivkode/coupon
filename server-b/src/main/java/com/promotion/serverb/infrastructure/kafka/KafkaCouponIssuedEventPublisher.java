@@ -2,7 +2,7 @@ package com.promotion.serverb.infrastructure.kafka;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.promotion.serverb.application.CouponIssuedEventPayload;
+import com.promotion.common.coupon.CouponIssuedEventPayload;
 import com.promotion.serverb.application.CouponIssuedEventPublishException;
 import com.promotion.serverb.application.CouponIssuedEventPublisher;
 import com.promotion.serverb.domain.CouponIssueOutbox;
@@ -82,8 +82,15 @@ class KafkaCouponIssuedEventPublisher implements CouponIssuedEventPublisher {
     }
 
     private String serialize(CouponIssuedEvent event) {
+        CouponIssuedEventPayload payload = new CouponIssuedEventPayload(
+            event.eventId(),
+            event.userId(),
+            event.couponCode().value(),
+            event.idempotencyKey(),
+            event.issuedAt()
+        );
         try {
-            return objectMapper.writeValueAsString(CouponIssuedEventPayload.of(event));
+            return objectMapper.writeValueAsString(payload);
         } catch (JsonProcessingException e) {
             // record 직렬화는 정상적으론 실패 불가 — 발생 시 시스템 결함.
             throw new IllegalStateException("kafka payload serialization failed", e);
