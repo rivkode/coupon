@@ -148,9 +148,12 @@ k6 day4-load (500 TPS) 결과:
 ## 6. 후속 PR / 추적 (Day 4 진행 — 갱신됨 2026-05-08)
 
 - [x] **PR #20**: Prometheus + Grafana 인프라 (`docker-compose.yml` + provisioning + 5 패널 대시보드)
-- [x] **PR #21**: Day 4 4 시나리오 (`load-test/scenarios/day4-{smoke,per-instance,real-scenario,spike}.js`) + 측정 보고서 [`docs/reports/01.load-test-results.md`](../reports/01.load-test-results.md)
-- [ ] **PR #22 (Phase C)**: **batch insert 도입 — GO** (측정 결과로 결정, 보고서 §5.1)
-- [ ] PR #23 (조건부): 명시적 백프레셔 — **HOLD** (CB 가 86% 흡수, 추가 큐 가치 < 비용. Phase C 후 재검토)
+- [x] **PR #21**: Day 4 4 시나리오 (`load-test/scenarios/day4-{smoke,per-instance,real-scenario,spike}.js`) + 측정 보고서 [`docs/reports/01.load-test-results.md`](../reports/01.load-test-results.md) + §7 1 vCPU 500 TPS 이론 분석
+- [ ] **PR #22 (Phase C)**: 4 항목 도입 (보고서 §7.8) —
+    1. **batch insert** (`IssueRequestService` tx1+tx2 → 1 batch tx)
+    2. **가상 스레드** (Java 21, `spring.threads.virtual.enabled=true`)
+    3. **명시적 백프레셔** (Resilience4j Bulkhead — admission control)
+    4. **HikariCP pool 증설** (10 → 50)
 - [ ] Day 5: 100,000 사용자 사이징 — Phase C 후 재측정 결과 기반
 
 ### 6.1 Phase B 측정 핵심 결과
