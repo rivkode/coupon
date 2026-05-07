@@ -85,6 +85,9 @@ done
 - **Server C consumer DLT 미구현**: 일시적 DB 오류는 Spring Kafka `DefaultErrorHandler` 의 default retry, UNIQUE 위반 / 잘못된 payload 는 ack-and-skip 으로 흡수. retry 모두 실패 시 stop → 운영 알림 + 수동 복구. CDC + DLT 는 프로덕션 진화 방향.
 - **Server C `concurrency: 1`**: 1 vCPU 환경에서 컨텍스트 스위칭 비용 > 병렬 이득. partition 3 개를 단일 consumer 가 처리 → 인스턴스 처리량은 partition 1개 단위 처리 속도에 묶임. 운영 진화 시 `concurrency=3` (인스턴스 수와 별개로 listener thread).
 - **IT 환경 정책 차이**: `server-c CouponConsumerIT` 는 EmbeddedKafka (in-process broker) 를 쓰고 `server-b OutboxPollerIT` 는 host docker-compose Kafka 를 쓴다. 의도가 다름 — 전자는 "실 메시지 → consume → DB 영속" 전 흐름 검증이라 broker 가 필수, 후자는 "트랜잭션 분리 + SKIP LOCKED + markPublished" 만 검증하므로 publisher 를 mock 처리. EmbeddedKafka 는 사전 docker compose up 없이 `./gradlew test` 한 줄로 통과.
+- **Server C redeem 의 idempotency 는 도메인 자체 멱등**: Idempotency-Key 헤더는 trace/log 용이고 별도 캐시/테이블 없음. 같은 user 의 같은 coupon 재호출은 본질적으로 같은 결과 (`used_at` 한 번 set 후 영구) — `newlyRedeemed=false` flag 로 첫 호출과 구분. 발급(issue) 의 강한 멱등 (캐시 + DB UNIQUE) 과 다른 정책. ADR-004 의 user-scoped 적용 범위는 동일하나 보장 강도가 다름.
+- **Server C redeem 의 소유권 마스킹**: 다른 user 의 쿠폰 시도와 "코드 없음" 모두 404 동일 응답. 코드 존재 여부 누설 방지. 운영 디버깅 시에는 log.warn 의 owner/requester 로 구분 가능.
+- **Server C `ApiResponse` / `ErrorResponse` / `GlobalExceptionHandler` 가 server-a 와 중복**: 후속 PR 에서 common 모듈로 통합 예정. 현재 두 서버가 동일 형식으로 진화 중이라 표류 위험은 작지만 명시적 통합 권장.
 
 ## 실행 정보
 
@@ -146,8 +149,8 @@ done
 |---|---|---|
 | #14 | Server B Outbox poller + Kafka producer | merged |
 | #15 | docs(decisions): Server A batch insert / 백프레셔는 Day 4 부하 측정 후 결정 | merged |
-| #16 | Server C Kafka consumer + UNIQUE 멱등성 (V2 user-scoped 정합) | in progress |
-| #17 | Server C Redeem API + 낙관적 락 | 예정 |
+| #16 | Server C Kafka consumer + UNIQUE 멱등성 (V2 user-scoped 정합) | merged |
+| #17 | Server C Redeem API + 낙관적 락 (ADR-007) | in progress |
 | #18 | e2e k6 day3 시나리오 + run-integrated.sh 확장 | 예정 |
 
 전체 5일 로드맵: [`CLAUDE.md` §12](./CLAUDE.md).

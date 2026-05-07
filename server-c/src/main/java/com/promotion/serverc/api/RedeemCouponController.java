@@ -1,0 +1,53 @@
+package com.promotion.serverc.api;
+
+import com.promotion.common.coupon.CouponCode;
+import com.promotion.serverc.api.dto.ApiResponse;
+import com.promotion.serverc.api.dto.RedeemCouponResponse;
+import com.promotion.serverc.application.RedeemCommand;
+import com.promotion.serverc.application.RedeemCouponService;
+import com.promotion.serverc.application.RedeemResult;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+/**
+ * 쿠폰 사용 진입점 (CLAUDE.md §5.3).
+ *
+ * <p>Headers:
+ * <ul>
+ *   <li>{@code X-User-Id} (필수) — 인증 단순화. JWT 미도입.</li>
+ *   <li>{@code Idempotency-Key} (필수) — UUID. trace/log 용 — redeem 자체가 본질적 멱등이라 별도 캐시 없음.</li>
+ * </ul>
+ *
+ * <p>HTTP 상태 매핑:
+ * <ul>
+ *   <li>200 OK — 정상 redeem 또는 같은 user 의 멱등 재호출</li>
+ *   <li>404 — 코드 없음 / 다른 user 의 쿠폰 (마스킹)</li>
+ *   <li>409 — 낙관락 race ({@code RACE_RETRY})</li>
+ *   <li>400 — 헤더 누락 / path variable invalid</li>
+ * </ul>
+ */
+@RestController
+@RequestMapping("/api/v1/coupons")
+@RequiredArgsConstructor
+public class RedeemCouponController {
+
+    private final RedeemCouponService redeemCouponService;
+
+    @PostMapping("/{code}/redeem")
+    public ResponseEntity<ApiResponse<RedeemCouponResponse>> redeem(
+        @PathVariable("code") String code,
+        @RequestHeader("X-User-Id") Long userId,
+        @RequestHeader("Idempotency-Key") String idempotencyKey
+    ) {
+        RedeemResult result = redeemCouponService.redeem(
+            new RedeemCommand(new CouponCode(code), userId, idempotencyKey));
+        return ResponseEntity.status(HttpStatus.OK)
+            .body(ApiResponse.success(RedeemCouponResponse.from(result)));
+    }
+}
