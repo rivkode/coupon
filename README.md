@@ -15,9 +15,11 @@
 ## 빠른 실행
 
 ```bash
-docker compose up -d
+docker compose up -d                                     # mysql + redis + kafka
 ./gradlew clean build -x test
-./gradlew :server-a:bootRun
+./gradlew :server-b:bootRun --args='--spring.profiles.active=local' &
+./gradlew :server-a:bootRun &                            # default profile (RestClient → 8081)
+./gradlew :server-c:bootRun &                            # Kafka consumer 활성
 ```
 
 ## 문서
@@ -38,30 +40,35 @@ docker compose up -d
 
 ## 검증 — 통합 e2e (k6)
 
-`server-a` + `server-b` + MySQL + Redis 가 모두 기동된 단일 환경에서 7개 시나리오 (phase9-01..06 + day2-04 burst) 를 한 번의 명령으로 검증합니다. assertion 기반 회귀 — 본격 1 vCPU 부하는 Day 4 capacity-planning 의 영역.
+`server-a` + `server-b` + `server-c` + MySQL + Redis + Kafka 가 모두 기동된 단일 환경에서
+12개 시나리오 (phase9-01..06 + day2-04 burst + day3-01..05) 를 한 번의 명령으로 검증합니다.
+assertion 기반 회귀 — 본격 1 vCPU 부하는 Day 4 capacity-planning 의 영역.
 
 ```bash
 brew install k6                                    # macOS
-docker compose up -d mysql redis                   # 인프라
+docker compose up -d mysql redis kafka             # 인프라
 
-# 두 서비스 모두 기동
+# 세 서비스 모두 기동
 ./gradlew :server-b:bootRun --args='--spring.profiles.active=local' &
 ./gradlew :server-a:bootRun &                      # default profile — RestClient 활성, base-url=8081
+./gradlew :server-c:bootRun &                      # default profile — Kafka consumer 활성
 
 # 헬스체크
 curl -sS http://localhost:8080/actuator/health
 curl -sS http://localhost:8081/actuator/health
+curl -sS http://localhost:8082/actuator/health
 
-# 통합 시나리오 일괄 실행 (stock seed + outbox truncate + CB warmup + 7 시나리오)
+# 통합 시나리오 일괄 실행 (stock seed + truncate + CB warmup + 12 시나리오)
 ./load-test/run-integrated.sh
 ```
 
 `run-integrated.sh` 가 자동 수행:
-1. Redis 샤드 10 × 100 = 1,000 stock seed
-2. MySQL outbox truncate (fail-fast)
-3. server-a CB warmup curl 5번 (cold start 시 read-timeout 200ms 초과로 OPEN 되는 함정 회피)
-4. phase9-01..06 + day2-04-burst 일괄 실행
-5. Outbox 행 수 사후 출력
+1. Redis FLUSHDB + server_a/b/c schema TRUNCATE
+2. Redis 샤드 10 × 100 = 1,000 stock seed
+3. server-a/b/c 헬스체크 (모두 UP 확인)
+4. server-a CB warmup curl 5번 (cold start 시 read-timeout 200ms 초과로 OPEN 되는 함정 회피)
+5. phase9-01..06 + day2-04-burst + day3-01..05 일괄 실행
+6. Outbox 행 수 + server_c.coupon 행 수 + used_at NOT NULL 행 수 사후 출력
 
 자세한 사전 조건 / 환경변수 / 결과 해석 / 트러블슈팅은 [`load-test/README.md`](./load-test/README.md) 참조.
 
@@ -150,7 +157,7 @@ done
 | #14 | Server B Outbox poller + Kafka producer | merged |
 | #15 | docs(decisions): Server A batch insert / 백프레셔는 Day 4 부하 측정 후 결정 | merged |
 | #16 | Server C Kafka consumer + UNIQUE 멱등성 (V2 user-scoped 정합) | merged |
-| #17 | Server C Redeem API + 낙관적 락 (ADR-007) | in progress |
-| #18 | e2e k6 day3 시나리오 + run-integrated.sh 확장 | 예정 |
+| #17 | Server C Redeem API + 낙관적 락 (ADR-007) | merged |
+| #18 | e2e k6 day3 시나리오 + run-integrated.sh 확장 | in progress |
 
 전체 5일 로드맵: [`CLAUDE.md` §12](./CLAUDE.md).
