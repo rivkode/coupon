@@ -27,6 +27,7 @@
 - **결정 + 거부된 대안** → [결정 (ADR) 인덱스](docs/decisions/README.md)
 - **장애 시나리오 (각 단계에서 죽으면?)** → [`failure-modes.md`](docs/runbooks/failure-modes.md)
 - **의도적으로 안 한 것** → [`scope-decisions.md`](docs/decisions/scope-decisions.md)
+- **요구사항 해석 — 채용팀 문의** → [`recruiting-team-questions.md`](docs/clarifications/recruiting-team-questions.md) — 본 산출물의 가정 (트래픽 시나리오 / 100,000명 정의 / 계산 근거 형태)
 - **검증** → [`load-test/README.md`](load-test/README.md) — 12개 e2e 시나리오 한 번에 실행
 
 ---
@@ -103,6 +104,9 @@ docker compose up -d mysql redis kafka                   # 인프라만
 ### 분석 / 기획
 - [요구사항 분석](docs/analysis/requirements-analysis.md)
 - [PRD](docs/prd/promotion-prd.md)
+
+### 요구사항 해석 / 문의 (`docs/clarifications/`)
+- [채용팀 문의 사항 + 답변 추적](docs/clarifications/recruiting-team-questions.md) — 트래픽 시나리오 / 100,000명 정의 / 계산 근거 형태 3가지 + 답변 도착 시 갱신
 
 전체 5일 로드맵: [`CLAUDE.md` §12](./CLAUDE.md)
 
