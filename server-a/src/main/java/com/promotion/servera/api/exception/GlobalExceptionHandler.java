@@ -3,9 +3,11 @@ package com.promotion.servera.api.exception;
 import com.promotion.servera.api.dto.ApiResponse;
 import com.promotion.servera.api.dto.ErrorResponse;
 import com.promotion.servera.api.dto.ErrorResponse.FieldError;
+import io.github.resilience4j.bulkhead.BulkheadFullException;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -77,6 +79,20 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleIllegalState(IllegalStateException ex) {
         ErrorResponse error = ErrorResponse.of("INVALID_STATE", ex.getMessage());
         return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiResponse.failure(error));
+    }
+
+    /**
+     * Phase C — Resilience4j Bulkhead 가 max-concurrent-calls 초과 시 던짐.
+     * 시스템 capacity 초과 트래픽 → 503 + Retry-After. CB 의 503 과 동일한 사용자 경험.
+     * (보고서 §5.2, ADR-005 "큐 가득 차면 503")
+     */
+    @ExceptionHandler(BulkheadFullException.class)
+    public ResponseEntity<ApiResponse<Void>> handleBulkheadFull(BulkheadFullException ex) {
+        ErrorResponse error = ErrorResponse.of(
+            "ADMISSION_CONTROL", "system at capacity, please retry");
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+            .header(HttpHeaders.RETRY_AFTER, "1")
+            .body(ApiResponse.failure(error));
     }
 
     @ExceptionHandler(Exception.class)

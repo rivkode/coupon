@@ -1,14 +1,22 @@
 spring:
   application:
     name: server-c
+  threads:
+    virtual:
+      # Phase C — Java 21 가상 스레드 활성화. Kafka consumer 처리 + redeem API 의 동시성 헤드룸 확보.
+      # Trade-off: server-c 는 본 측정에서 active~1 이라 가상 스레드의 직접 효과는 작음. 단,
+      # redeem 트래픽 증가 / consumer concurrency 확장 시 자연스러운 스케일을 위한 사전 도입.
+      enabled: true
   datasource:
     url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/server_c?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
     username: ${DB_USER:promotion}
     password: ${DB_PASSWORD:promotion}
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
-      # 1 vCPU 환경 보수적 설정. Day 4 k6 부하 테스트 결과에 따라 튜닝.
-      maximum-pool-size: 8
+      # Phase C — pool 10 유지 (보고서 §5.3 갱신).
+      # server-c 는 Kafka consumer (concurrency=1, max-poll-records=10) + redeem API.
+      # 동시 처리 ~10건 + read query 가벼움 — pool 10 충분. Phase B 측정에서도 active~1.
+      maximum-pool-size: ${HIKARI_POOL_SIZE:10}
       connection-timeout: 3000
       validation-timeout: 1000
   jpa:

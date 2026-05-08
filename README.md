@@ -160,13 +160,13 @@ docker compose up -d mysql redis kafka                   # 인프라만
 | #18 | e2e k6 day3 시나리오 + run-integrated.sh 확장 | merged |
 | #19 | docs: 평가자 가이드 + 시퀀스 + 장애 시나리오 + ADR 보강 + 컨테이너 자원 제약 (1 vCPU / 2 GB) | in progress |
 
-### Day 4 — 관측성 + 부하 측정 (Phase A / B 완료, Phase C 결정됨)
+### Day 4 — 관측성 + 부하 측정 (Phase A / B / C 완료)
 
 | PR | Phase | 내용 | 상태 |
 |---|---|---|---|
 | #20 | A | Prometheus + Grafana 인프라 + 5 패널 대시보드 | merged |
-| #21 | B | 4 k6 시나리오 + 측정 보고서 + Phase C GO 결정 | in progress |
-| #22 | C | batch insert 도입 (조건부 — Phase B 결과로 GO) | planned |
+| #21 | B | 4 k6 시나리오 + 측정 보고서 + Phase C GO 결정 | merged |
+| #22 | C | batch insert + 가상 스레드 + Bulkhead + HikariCP 50 — 재측정으로 효과 입증 (p95 -80%, pending -99.5%) | in progress |
 
 ### Day 5 — 100,000명 사이징 (예정)
 

@@ -6,6 +6,7 @@ import com.promotion.servera.api.dto.IssueCouponResponse;
 import com.promotion.servera.application.IssueCommand;
 import com.promotion.servera.application.IssueOutcome;
 import com.promotion.servera.application.IssueRequestService;
+import io.github.resilience4j.bulkhead.annotation.Bulkhead;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
@@ -42,7 +43,13 @@ public class IssueRequestController {
 
     private final IssueRequestService issueRequestService;
 
+    /**
+     * Phase C — Bulkhead admission control (CLAUDE.md ADR-005, 보고서 §5.2).
+     * max-concurrent-calls 초과 시 BulkheadFullException → GlobalExceptionHandler 가 503 + Retry-After 매핑.
+     * 큐 없음 (max-wait=0) — 시스템 capacity 초과 트래픽을 즉시 거부 (Tomcat queue 와 두 단계 큐 회피).
+     */
     @PostMapping
+    @Bulkhead(name = "issueRequestBulkhead", type = Bulkhead.Type.SEMAPHORE)
     public ResponseEntity<ApiResponse<IssueCouponResponse>> issue(
         @RequestHeader("X-User-Id") Long userId,
         @RequestHeader("Idempotency-Key") String idempotencyKey,
