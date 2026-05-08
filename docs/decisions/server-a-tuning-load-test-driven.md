@@ -149,12 +149,12 @@ k6 day4-load (500 TPS) 결과:
 
 - [x] **PR #20**: Prometheus + Grafana 인프라 (`docker-compose.yml` + provisioning + 5 패널 대시보드)
 - [x] **PR #21**: Day 4 4 시나리오 (`load-test/scenarios/day4-{smoke,per-instance,real-scenario,spike}.js`) + 측정 보고서 [`docs/reports/01.load-test-results.md`](../reports/01.load-test-results.md) + §7 1 vCPU 500 TPS 이론 분석
-- [ ] **PR #22 (Phase C)**: 4 항목 도입 (보고서 §7.8) —
-    1. **batch insert** (`IssueRequestService` tx1+tx2 → 1 batch tx)
-    2. **가상 스레드** (Java 21, `spring.threads.virtual.enabled=true`)
-    3. **명시적 백프레셔** (Resilience4j Bulkhead — admission control)
-    4. **HikariCP pool 증설** (10 → 50)
-- [ ] Day 5: 100,000 사용자 사이징 — Phase C 후 재측정 결과 기반
+- [x] **PR #22 (Phase C)**: 4 항목 + server-b/c 도 일부 적용 + 재측정 (보고서 §9) —
+    1. **batch insert** (`IssueRequestService` tx1+tx2 → 1 batch tx) + 5층 방어 (queue capacity 1,000 / 동기 fallback / graceful shutdown / heap 모니터링)
+    2. **가상 스레드** (Java 21, server-a/b/c 모두)
+    3. **Bulkhead** (Resilience4j semaphore max-concurrent=50 / max-wait=0ms)
+    4. **HikariCP pool 증설** (server-a 10→50, server-b 8→50, server-c 8→30)
+- [ ] Day 5: 100,000 사용자 사이징 — Phase C 측정값 기반 (보고서 §9.6 흐름)
 
 ### 6.1 Phase B 측정 핵심 결과
 
@@ -163,8 +163,26 @@ k6 day4-load (500 TPS) 결과:
 | 측정값 | §3.3 임계 | 결정 |
 |---|---|---|
 | HikariCP active **10** + pending **188** (peak) | "HikariCP exhausted + tx1+tx2 가 원인" | **batch insert GO** ✅ |
-| Tomcat busy **200** (peak, max 도달) | "Tomcat queue full + reject" | 명시적 백프레셔 HOLD (CB 가 흡수) |
+| Tomcat busy **200** (peak, max 도달) | "Tomcat queue full + reject" | 명시적 백프레셔 HOLD → §7 분석 후 GO 로 수정 |
 | http p95 max **4.06s** (per-instance p95 **648ms**) | "p95 > 500ms" | Phase C 진입 GREEN LIGHT ✅ |
+
+### 6.2 Phase C 측정 결과 (closed-loop 검증)
+
+본 문서 §3.3 의 결정 트리가 Phase B 측정 → Phase C 도입 → 재측정 로 완성:
+
+| 측정 | Phase B | Phase C v2 | 효과 |
+|---|---|---|---|
+| HikariCP pending (server-a) | **188** | **1** | -99.5% — 큐 대기 사실상 사라짐 ✅ |
+| p95 max (server-a) | **4.06s** | **0.83s** | -80% ✅ |
+| effective throughput | 285 req/s | **508 req/s** | +78% ✅ |
+| OTHER_ERROR | 0 | **0** | 시스템 결함 없음 ✅ |
+
+batch insert 의 5층 방어 작동 입증 (보고서 §9.4):
+- 방어선 1 (bounded queue 1,000): peak 1,000 도달 — 상한 작동
+- 방어선 2 (동기 fallback): 18,900건 발동 — graceful degradation
+- 방어선 4 (heap watermark): 0건 — heap 압박 미발생 (의도대로)
+
+다음 병목 후보: server-b CPU 73% — 운영 분산 환경에서는 server-b N 인스턴스 분산 자연 해소.
 
 본 결정의 근거 + 데이터 + Day 5 사이징 입력은 모두 [`../reports/01.load-test-results.md`](../reports/01.load-test-results.md) 에 정리.
 

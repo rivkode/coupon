@@ -1,17 +1,22 @@
 spring:
   application:
     name: server-b
+  threads:
+    virtual:
+      # Phase C — Java 21 가상 스레드 활성화. server-a 의 동시 호출 증가에 따라 server-b Tomcat thread 한계 폐기.
+      enabled: true
   datasource:
     # server_b 는 Outbox 보조 RDBMS (CLAUDE.md ADR-002, ADR-006).
     # 재고 권위는 Redis (ADR-003) — 본 DB 는 Outbox 적재 / poller 만 사용.
-    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/server_b?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/server_b?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&rewriteBatchedStatements=true
     username: ${DB_USER:promotion}
     password: ${DB_PASSWORD:promotion}
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
-      # 1 vCPU 환경 보수적 설정. Outbox 는 INSERT 위주라 풀 작게 유지.
-      # Day 4 k6 부하 테스트 결과에 따라 튜닝.
-      maximum-pool-size: 8
+      # Phase C — pool 8 → 50 (보고서 §5.3, server-b 측정으로 다음 병목 식별).
+      # server-a 의 Bulkhead 50 동시 호출이 server-b 로 그대로 도착 — pool 8 이면 다시 saturate.
+      # MySQL default max_connections=151. 3 인스턴스 × 50 = 150 직하 (운영 시 my.cnf 증설).
+      maximum-pool-size: ${HIKARI_POOL_SIZE:50}
       connection-timeout: 3000
       validation-timeout: 1000
   jpa:

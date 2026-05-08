@@ -1,14 +1,23 @@
 spring:
   application:
     name: server-a
+  threads:
+    virtual:
+      # Phase C — Java 21 가상 스레드 활성화. Tomcat platform thread max=200 한계 폐기.
+      # 1 vCPU 환경에서 carrier thread 가 가상 스레드 다중화 — I/O wait 동안 carrier 반환 → 더 많은 동시 처리.
+      # Trade-off: synchronized block / native code = pinning 위험. Spring Web + JDBC + HikariCP 는 가상 스레드 친화 (검증됨).
+      enabled: true
   datasource:
-    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/server_a?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/server_a?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&rewriteBatchedStatements=true
     username: ${DB_USER:promotion}
     password: ${DB_PASSWORD:promotion}
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
-      # 1 vCPU 환경 보수적 설정. Day 4 k6 부하 테스트 결과에 따라 튜닝.
-      maximum-pool-size: 10
+      # Phase C — pool 10 → 50 (보고서 §5.3). batch insert 와 결합해 connection 점유 시간 ½ + pool 5x 증설.
+      # MySQL default max_connections=151. 3 인스턴스 × 50 = 150 직하 — 운영 시 my.cnf 증설 권장.
+      # ${HIKARI_POOL_SIZE} env 변수는 server-a/b/c 가 공유 — 의도된 단순화 (동일 정책 가정).
+      # 운영 시 인스턴스별 분리 필요하면 SERVER_A_HIKARI_POOL_SIZE 같은 별도 변수로 override.
+      maximum-pool-size: ${HIKARI_POOL_SIZE:50}
       connection-timeout: 3000
       validation-timeout: 1000
   jpa:
@@ -75,6 +84,18 @@ logging:
 
 # 애플리케이션 정책 값. ADR 기반 기본값 + 환경변수 override.
 app:
+  # Phase C — IssueRequest batch insert 정책 (보고서 §5.1).
+  # 5층 방어: bounded queue + 동기 fallback + graceful shutdown + heap 모니터링 + (운영) persistent queue
+  batch:
+    queue:
+      capacity: ${BATCH_QUEUE_CAPACITY:1000}    # ArrayBlockingQueue 상한 (~수십 KB 메모리)
+    flush:
+      interval-ms: ${BATCH_FLUSH_INTERVAL_MS:200}   # @Scheduled fixedDelay
+      max-size: ${BATCH_FLUSH_MAX_SIZE:100}         # 한 batch 의 max row 수
+    heap:
+      high-watermark: ${BATCH_HEAP_HIGH:0.80}    # heap 80% 도달 → rejecting 모드 (방어선 4)
+      low-watermark:  ${BATCH_HEAP_LOW:0.70}     # heap 70% 회복 → rejecting 해제
+      check-interval-ms: ${BATCH_HEAP_CHECK_MS:5000}
   server-b:
     # Server B 의 internal API. Stub profile 에서는 미사용.
     # 포트: server-a=8080, server-b=8081, server-c=8082 (PR #8 에서 server-b 포트 8081 확정).
@@ -108,3 +129,11 @@ resilience4j:
         permitted-number-of-calls-in-half-open-state: 3
         automatic-transition-from-open-to-half-open-enabled: true
         register-health-indicator: true
+  # Phase C — system-wide admission control (CLAUDE.md ADR-005, 보고서 §5.2).
+  # 동시 50 처리 + 초과는 즉시 fail (semaphore 0 wait) → fallback 으로 503 + Retry-After.
+  # 50 = 보고서 §7.6 단계 4 — 헤드룸 30% 안전 영역 (1 vCPU 가 안전하게 처리 가능한 동시성).
+  bulkhead:
+    instances:
+      issueRequestBulkhead:
+        max-concurrent-calls: ${BULKHEAD_MAX_CONCURRENT:50}
+        max-wait-duration: 0ms      # 큐 없음 — 즉시 거부 (Tomcat queue 와 두 단계 큐 회피)

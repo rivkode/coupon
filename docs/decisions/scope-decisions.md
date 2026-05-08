@@ -33,7 +33,8 @@
 |---|---|---|
 | **분산 트레이싱** | Day 4 부하 측정 + 사이징의 핵심 영역이 아님. MDC traceId 만 적용. | OpenTelemetry + Jaeger / Tempo |
 | **구조화된 로깅 / 중앙 수집** | local 개발 / k6 검증 위주. 평가자가 grep 으로 추적 가능. | ELK / Loki + JSON 로그 |
-| **Grafana 대시보드** | **PR #20 에서 인프라 도입** — docker-compose 에 Prometheus + Grafana 통합, 5 패널 (JVM heap / CPU / HTTP p95 / HikariCP / Tomcat busy) 자동 provisioning. Phase B 부하 측정 결과 캡처용. | 운영 — Alert Manager + multi-cluster + 분산 트레이싱 (Loki / Tempo) |
+| **Grafana 대시보드** | **PR #20 에서 인프라 도입** — docker-compose 에 Prometheus + Grafana 통합. Phase B 5 패널 + Phase C 4 패널 (batch queue / enqueue rate / flush duration / Bulkhead) 자동 provisioning. | 운영 — Alert Manager + multi-cluster + 분산 트레이싱 (Loki / Tempo) |
+| **batch insert 의 persistent queue** | PR #22 Phase C 의 5층 방어 중 1~4 도입 (bounded queue + 동기 fallback + graceful shutdown + heap 모니터링). 5층 = persistent queue (Chronicle / Kafka audit topic) 는 운영 진화 영역. JVM 비정상 종료 시 in-flight audit (~수백건) 손실 인정 — 보고서 §5.1.3. | 운영 — Chronicle Queue 또는 Kafka audit topic |
 | **GitHub Actions CI** | 5일 일정 + 1인 작업이라 PR 수동 검증 (`./gradlew test`). | 다중 작업자 진입 시 즉시 도입 |
 | **Helm / Kustomize** | docker-compose 만 제공. K8s 배포는 본 과제 외. | 운영 환경 진입 시 |
 

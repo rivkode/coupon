@@ -25,6 +25,9 @@ dependencies {
 	implementation("io.github.resilience4j:resilience4j-circuitbreaker:2.3.0")
 	implementation("io.github.resilience4j:resilience4j-timelimiter:2.3.0")
 	implementation("io.github.resilience4j:resilience4j-reactor:2.3.0")
+	// Phase C — admission control (Bulkhead semaphore). 시스템 capacity 초과 트래픽을 즉시 503 으로 흡수.
+	// CLAUDE.md ADR-005 ("A의 큐가 가득 차면 503") 의 system-wide admission control.
+	implementation("io.github.resilience4j:resilience4j-bulkhead:2.3.0")
 
 	implementation("io.micrometer:micrometer-registry-prometheus")
 }
