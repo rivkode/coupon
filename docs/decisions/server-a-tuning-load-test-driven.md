@@ -153,7 +153,7 @@ k6 day4-load (500 TPS) 결과:
     1. **batch insert** (`IssueRequestService` tx1+tx2 → 1 batch tx) + 5층 방어 (queue capacity 1,000 / 동기 fallback / graceful shutdown / heap 모니터링)
     2. **가상 스레드** (Java 21, server-a/b/c 모두)
     3. **Bulkhead** (Resilience4j semaphore max-concurrent=50 / max-wait=0ms)
-    4. **HikariCP pool 증설** (server-a 10→50, server-b 8→50, server-c 8→30)
+    4. **HikariCP pool — 10 유지** (측정은 50 으로 진행, 트레이드오프 재검토 후 10 회귀 — 보고서 §5.3.2). batch insert 가 critical path 의 connection 점유를 0 으로 만들어 pool 사이즈는 부차적, 1 vCPU / MySQL slot 한계와 정합.
 - [ ] Day 5: 100,000 사용자 사이징 — Phase C 측정값 기반 (보고서 §9.6 흐름)
 
 ### 6.1 Phase B 측정 핵심 결과

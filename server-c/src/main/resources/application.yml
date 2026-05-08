@@ -13,9 +13,10 @@ spring:
     password: ${DB_PASSWORD:promotion}
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
-      # Phase C — pool 8 → 30. server-c 는 Kafka consumer (concurrency=1) + redeem API 라
-      # server-a/b 만큼 큰 pool 불필요. 30 = 일관성 유지 + 헤드룸.
-      maximum-pool-size: ${HIKARI_POOL_SIZE:30}
+      # Phase C — pool 10 유지 (보고서 §5.3 갱신).
+      # server-c 는 Kafka consumer (concurrency=1, max-poll-records=10) + redeem API.
+      # 동시 처리 ~10건 + read query 가벼움 — pool 10 충분. Phase B 측정에서도 active~1.
+      maximum-pool-size: ${HIKARI_POOL_SIZE:10}
       connection-timeout: 3000
       validation-timeout: 1000
   jpa:

@@ -13,10 +13,11 @@ spring:
     password: ${DB_PASSWORD:promotion}
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
-      # Phase C — pool 8 → 50 (보고서 §5.3, server-b 측정으로 다음 병목 식별).
-      # server-a 의 Bulkhead 50 동시 호출이 server-b 로 그대로 도착 — pool 8 이면 다시 saturate.
-      # MySQL default max_connections=151. 3 인스턴스 × 50 = 150 직하 (운영 시 my.cnf 증설).
-      maximum-pool-size: ${HIKARI_POOL_SIZE:50}
+      # Phase C — pool 10 유지 (보고서 §5.3 갱신, 측정 시 50 → 10 으로 회귀).
+      # server-b 는 단일 tx (Lua + outbox INSERT) — request 1건당 connection 점유 짧음.
+      # Phase B 측정에서 active~1 / pending~0 — pool 10 으로 충분 (1 vCPU 환경 정합).
+      # server-a 의 Bulkhead 50 이 server-b 로 도착해도 단일 tx 라 빠르게 회수.
+      maximum-pool-size: ${HIKARI_POOL_SIZE:10}
       connection-timeout: 3000
       validation-timeout: 1000
   jpa:

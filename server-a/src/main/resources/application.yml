@@ -13,11 +13,12 @@ spring:
     password: ${DB_PASSWORD:promotion}
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
-      # Phase C — pool 10 → 50 (보고서 §5.3). batch insert 와 결합해 connection 점유 시간 ½ + pool 5x 증설.
-      # MySQL default max_connections=151. 3 인스턴스 × 50 = 150 직하 — 운영 시 my.cnf 증설 권장.
-      # ${HIKARI_POOL_SIZE} env 변수는 server-a/b/c 가 공유 — 의도된 단순화 (동일 정책 가정).
-      # 운영 시 인스턴스별 분리 필요하면 SERVER_A_HIKARI_POOL_SIZE 같은 별도 변수로 override.
-      maximum-pool-size: ${HIKARI_POOL_SIZE:50}
+      # Phase C — pool 10 유지 (보고서 §5.3 갱신).
+      # batch insert 가 critical path 의 connection 점유를 0 으로 만들어 (큐 enqueue → scheduler flush)
+      # pool 큰 의미 사라짐. 평균 사용 ~6 conn (batch flusher 1 + 동기 fallback 수개 + read).
+      # 1 vCPU 환경 / MySQL default max_connections=151 (3 × 10 = 30, 20% 만 사용) 에 정합.
+      # ${HIKARI_POOL_SIZE} env 로 운영 시 override 가능.
+      maximum-pool-size: ${HIKARI_POOL_SIZE:10}
       connection-timeout: 3000
       validation-timeout: 1000
   jpa:
