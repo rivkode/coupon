@@ -145,16 +145,28 @@ k6 day4-load (500 TPS) 결과:
 
 ---
 
-## 6. 후속 PR / 추적 (Day 4 진행 시 갱신)
+## 6. 후속 PR / 추적 (Day 4 진행 — 갱신됨 2026-05-08)
 
-- [ ] PR #N: `load-test/scenarios/day4-*.js` 추가 + `actuator/prometheus` scrape 가이드
-- [ ] PR #N+1: Day 4 부하 측정 결과 `docs/runbooks/day4-load-test-report.md`
-- [ ] PR #N+2 (조건부): batch insert 도입 (측정 결과 §3.3 의 "도입" 분기일 때만)
-- [ ] PR #N+3 (조건부): 백프레셔 도입 (측정 결과 §3.3 의 "도입" 분기일 때만)
-- [ ] README 트레이드오프 섹션 갱신 — 측정 결과 + 도입/미도입 결정 + 근거 1줄
+- [x] **PR #20**: Prometheus + Grafana 인프라 (`docker-compose.yml` + provisioning + 5 패널 대시보드)
+- [x] **PR #21**: Day 4 4 시나리오 (`load-test/scenarios/day4-{smoke,per-instance,real-scenario,spike}.js`) + 측정 보고서 [`docs/reports/01.load-test-results.md`](../reports/01.load-test-results.md) + §7 1 vCPU 500 TPS 이론 분석
+- [ ] **PR #22 (Phase C)**: 4 항목 도입 (보고서 §7.8) —
+    1. **batch insert** (`IssueRequestService` tx1+tx2 → 1 batch tx)
+    2. **가상 스레드** (Java 21, `spring.threads.virtual.enabled=true`)
+    3. **명시적 백프레셔** (Resilience4j Bulkhead — admission control)
+    4. **HikariCP pool 증설** (10 → 50)
+- [ ] Day 5: 100,000 사용자 사이징 — Phase C 후 재측정 결과 기반
 
-본 문서는 **측정 결과가 나온 시점에 §6 을 갱신** 한다. 평가자가 본 문서를 읽으면 "측정 우선
-+ 정량 근거" 의 흐름을 그대로 따라갈 수 있다.
+### 6.1 Phase B 측정 핵심 결과
+
+본 문서 §3.3 의 결정 트리에 정확히 매핑:
+
+| 측정값 | §3.3 임계 | 결정 |
+|---|---|---|
+| HikariCP active **10** + pending **188** (peak) | "HikariCP exhausted + tx1+tx2 가 원인" | **batch insert GO** ✅ |
+| Tomcat busy **200** (peak, max 도달) | "Tomcat queue full + reject" | 명시적 백프레셔 HOLD (CB 가 흡수) |
+| http p95 max **4.06s** (per-instance p95 **648ms**) | "p95 > 500ms" | Phase C 진입 GREEN LIGHT ✅ |
+
+본 결정의 근거 + 데이터 + Day 5 사이징 입력은 모두 [`../reports/01.load-test-results.md`](../reports/01.load-test-results.md) 에 정리.
 
 ---
 
