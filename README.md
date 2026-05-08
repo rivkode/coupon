@@ -22,6 +22,7 @@
 
 ### 2) 가장 보고싶은 부분만 빨리 보기
 
+- **30분 follow-along** → [설계 결정 + 트레이드오프 — 코드 따라가기 투어](docs/walkthrough/01.design-decisions-tour.md) — 15 주요 결정 + 코드 위치 + 30분 코스
 - **시스템 한눈** → [아키텍처 개요](docs/architecture/01.Overview.md) (5분)
 - **핵심 흐름 시각화** → [시퀀스 다이어그램](docs/architecture/03.Sequence-Diagrams.md) (정상 / 보상 / SOLD_OUT / redeem race)
 - **결정 + 거부된 대안** → [결정 (ADR) 인덱스](docs/decisions/README.md)
@@ -107,6 +108,9 @@ docker compose up -d mysql redis kafka                   # 인프라만
 
 ### 요구사항 해석 / 문의 (`docs/clarifications/`)
 - [채용팀 문의 사항 + 답변 추적](docs/clarifications/recruiting-team-questions.md) — 트래픽 시나리오 / 100,000명 정의 / 계산 근거 형태 3가지 + 답변 도착 시 갱신
+
+### 학습 / Review 가이드 (`docs/walkthrough/`)
+- [설계 결정 + 트레이드오프 — 코드 따라가기 투어](docs/walkthrough/01.design-decisions-tour.md) — 15 주요 결정 + 코드 위치 + 30분 follow-along 순서
 
 전체 5일 로드맵: [`CLAUDE.md` §12](./CLAUDE.md)
 
