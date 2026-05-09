@@ -40,6 +40,9 @@ subprojects {
 
 	tasks.withType<Test> {
 		useJUnitPlatform()
+		// colima / 일부 Docker Desktop 환경에서 docker.sock mount 가 안 되어 Ryuk(testcontainers cleanup helper)
+		// 부팅이 실패한다. Ryuk 가 없어도 테스트 자체는 동작 — JVM 종료 시 컨테이너 자동 정리만 안 됨.
+		environment("TESTCONTAINERS_RYUK_DISABLED", "true")
 	}
 
 	tasks.withType<JavaCompile> {

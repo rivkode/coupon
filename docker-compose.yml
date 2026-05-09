@@ -160,13 +160,10 @@ services:
     environment:
       DB_HOST: mysql
       DB_PORT: 3306
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
       SERVER_B_URL: http://server-b:8081
+      HIKARI_POOL_SIZE: ${HIKARI_POOL_SIZE_A:-20}
     depends_on:
       mysql:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q UP || exit 1"]
@@ -189,14 +186,11 @@ services:
     ports:
       - "8081:8081"
     environment:
-      DB_HOST: mysql
-      DB_PORT: 3306
       REDIS_HOST: redis
       REDIS_PORT: 6379
       KAFKA_BOOTSTRAP: kafka:9092
+      SERVER_C_URL: http://server-c:8082
     depends_on:
-      mysql:
-        condition: service_healthy
       redis:
         condition: service_healthy
       kafka:

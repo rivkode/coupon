@@ -1,39 +1,31 @@
-// 발급 요청 공통 페이로드/헤더 빌더.
+// 신규 설계 — 발급 요청 본문 10 필드 (README §발급 요청).
+// 헤더 X-User-Id 로 사용자 식별, body 에는 발급 컨텍스트만.
 
-import { uuidv4 } from 'https://jslib.k6.io/k6-utils/1.4.0/index.js';
+const ONE_MONTH_MS = 30 * 24 * 60 * 60 * 1000;
 
-export function buildBody(overrides = {}) {
+export function buildBody(eventId, couponTypeId) {
+    const now = new Date();
     return JSON.stringify({
-        eventId: 1,
+        country: 'KR',
+        eventId,
+        couponTypeId,
+        issuedAt: now.toISOString(),
+        expireAt: new Date(now.getTime() + ONE_MONTH_MS).toISOString(),
+        channel: 'APP',
         deviceId: 'k6-device',
-        channel: 'WEB',
-        requestedAt: new Date().toISOString(),
         clientVersion: '1.0.0',
-        region: 'KR',
         language: 'ko',
         marketingConsent: true,
-        campaignSource: 'k6',
-        metadata: '{}',
-        ...overrides,
     });
 }
 
-export function buildHeaders(userId, idempotencyKey = uuidv4()) {
+export function buildHeaders(userId) {
     return {
         'X-User-Id': String(userId),
-        'Idempotency-Key': idempotencyKey,
         'Content-Type': 'application/json',
     };
 }
 
-export function newIdempotencyKey() {
-    return uuidv4();
-}
-
-/** Redeem 요청 헤더. body 없음, Content-Type 불필요. */
-export function buildRedeemHeaders(userId, idempotencyKey = uuidv4()) {
-    return {
-        'X-User-Id': String(userId),
-        'Idempotency-Key': idempotencyKey,
-    };
+export function buildRedeemHeaders(userId) {
+    return { 'X-User-Id': String(userId) };
 }

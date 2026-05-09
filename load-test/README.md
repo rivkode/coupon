@@ -1,10 +1,6 @@
-# load-test — 통합 e2e 시나리오 (k6)
+# load-test — k6 부하 시나리오
 
-`server-a` + `server-b` + `server-c` + MySQL + Redis + Kafka 가 **모두 기동된 단일 환경**에서
-동작 정확성을 assertion 으로 검증합니다. 부하 테스트가 아니라 기능 회귀 — VU 1 / iterations 1
-시나리오 11개 + 작은 burst 1개. (본격 1 vCPU 부하 / 사이징은 Day 4 의 별도 시나리오 영역.)
-
-> **자원 제약**: 평가 5축 ⑤ 의 전제는 각 서비스 **1 vCPU / 2 GB RAM**. docker compose 모드 (§1.2 권장) 가 컨테이너 단위로 자원 제약을 강제 — 사이징 / 부하 측정 결과의 신뢰성 확보. bootRun 모드는 빠른 개발용.
+신규 설계의 발급 흐름 — 인스턴스당 1000 TPS 의 응답 latency / acceptance rate 를 측정.
 
 ---
 
@@ -13,262 +9,102 @@
 ### 1.1 k6 설치
 
 ```bash
-brew install k6                  # macOS
-# 또는 https://grafana.com/docs/k6/latest/set-up/install-k6/
-
-k6 --version                     # v1.x 권장
+brew install k6     # macOS
+k6 --version        # v1.x
 ```
 
-### 1.2 인프라 + 세 서비스 모두 기동
-
-#### A. docker compose 모드 (**권장 — 자원 제약 강제**)
-
-각 서비스가 cpus=1.0 + mem_limit=2g 컨테이너로 실행. 사이징 / 부하 검증의 신뢰성 확보.
+### 1.2 인프라 + 세 서비스 기동
 
 ```bash
-# bootJar 빌드 (호스트)
+# bootJar 빌드
 ./gradlew clean :server-a:bootJar :server-b:bootJar :server-c:bootJar -x test
 
-# 인프라 + 3 서비스 한 번에
+# 인프라 + 3 서비스 (각 서비스 cpus=1, mem_limit=2g)
 docker compose up -d --build
 
-# 모든 컨테이너 healthy 까지 ~30~60초 대기
+# 헬스 확인 (모두 UP 까지 ~30~60초)
 docker compose ps
+curl -sS http://localhost:8080/actuator/health   # server-a
+curl -sS http://localhost:8081/actuator/health   # server-b
+curl -sS http://localhost:8082/actuator/health   # server-c
 ```
 
-#### B. bootRun 모드 (개발 편의 — 자원 제약 없음)
+### 1.3 마스터 데이터 시드 (Server C)
 
-코드 변경 후 빠른 검증용. 호스트 자원을 무제한 사용.
+신규 설계는 재고가 C 의 `coupon_type_inventory` 에 있음. 부하 시작 전 event / coupon_type / inventory 가 시드되어 있어야 합니다.
 
-```bash
-docker compose up -d mysql redis kafka                # 인프라만
-./gradlew :server-b:bootRun --args='--spring.profiles.active=local' &
-./gradlew :server-a:bootRun &
-./gradlew :server-c:bootRun &
+```sql
+-- 단일 이벤트 + 단일 coupon_type + 재고 10000 시드 예시
+USE server_c;
+INSERT INTO event (event_id, name, content, started_at, ended_at)
+    VALUES (1, 'concert-presale', 'demo', NOW(3) - INTERVAL 1 HOUR, NOW(3) + INTERVAL 1 HOUR);
+INSERT INTO coupon_type (coupon_type_id, event_id, name, discount_rate)
+    VALUES (1, 1, '10% discount', 10);
+INSERT INTO coupon_type_inventory (event_id, coupon_type_id, total_inventory, available_count)
+    VALUES (1, 1, 10000, 10000);
 ```
-
-#### 헬스 확인 (양쪽 모드 공통)
-
-```bash
-curl -sS http://localhost:8080/actuator/health      # server-a UP
-curl -sS http://localhost:8081/actuator/health      # server-b UP
-curl -sS http://localhost:8082/actuator/health      # server-c UP
-```
-
-### 1.3 깨끗한 상태로 시작 (옵션)
-
-이전 실행이 남긴 `(user_id, idempotency_key)` 행 / Redis 캐시가 일부 시나리오의 의도와
-부딪칠 수 있습니다. 첫 실행이 아니면 권장:
-
-```bash
-docker exec promotion-mysql mysql -upromotion -ppromotion -e \
-    "USE server_a; TRUNCATE TABLE issue_request; \
-     USE server_b; TRUNCATE TABLE coupon_issue_outbox; \
-     USE server_c; TRUNCATE TABLE coupon;"
-docker exec promotion-redis redis-cli FLUSHALL
-```
-
-`run-integrated.sh` 가 매 실행마다 stock seed + 세 schema 의 truncate 를 자동 수행합니다.
 
 ---
 
-## 2. 시나리오 일괄 실행
+## 2. 시나리오 실행
 
 ```bash
 ./load-test/run-integrated.sh
 ```
 
-스크립트가 수행하는 일:
+스크립트는 헬스체크 → Redis FLUSHDB → k6 시나리오 (`issue-1k-tps`) 를 실행합니다.
 
-1. **Redis FLUSHDB** + **세 schema TRUNCATE** — server_a/server_b/server_c 모두 비움.
-2. **Stock seed** — `event:1:stock:0~9` 각 100 (총 1,000장). `STOCK_PER_SHARD` env 로 변경.
-3. **헬스체크** — server-a / server-b / server-c 모두 UP 확인. 부팅 불완전 시 fail-fast.
-4. **CB warmup** — 5번 curl 로 server-a 의 Resilience4j sliding-window 정상화 (cold start 시 read-timeout 200ms 초과로 CB OPEN 되는 함정 회피).
-5. **시나리오 12개 일괄 실행**:
-   - phase9-01 ~ 06 (server-a 발급 영역)
-   - day2-04-burst (50 VU × 4 iter, 통합 burst)
-   - day3-01 ~ 05 (server-c redeem 영역)
-6. **사후 검증** — `coupon_issue_outbox` 행 수 + `server_c.coupon` 행 수 + `used_at NOT NULL` 행 수 출력.
+### 2.1 환경변수
+
+| 변수 | 기본값 | 용도 |
+|---|---|---|
+| `BASE_URL` | `http://localhost:8080` | server-a endpoint |
+| `EVENT_ID` | `1` | 부하 대상 이벤트 |
+| `COUPON_TYPE_ID` | `1` | 부하 대상 쿠폰 타입 |
 
 ---
 
 ## 3. 시나리오 매핑
 
-| 파일 | 검증 대상 | 통과 조건 |
-|---|---|---|
-| `phase9-01-issue-success.js` | 정상 발급 (server-a → server-b → ISSUED) | 200 + status=SUCCEEDED + couponCode 12 chars |
-| `phase9-02-idempotency.js` | server-a IdempotencyFilter (ADR-004) — 같은 idem 두 번째는 캐시 hit | 두 응답의 requestId / couponCode 동일 |
-| `phase9-03-cross-user.js` | (user_id, idempotency_key) UNIQUE — 다른 user 가 같은 idem 으로 충돌 안 함 | 두 user 모두 발급, requestId / couponCode 다름 |
-| `phase9-04-rate-limit.js` | Bucket4j Lettuce backend (ADR-005) — 1초 15회 호출 시 11~15번째 429 | 처음 10건 200 + 나머지 429 + Retry-After |
-| `phase9-05-missing-header.js` | server-a 입구 검증 — Idempotency-Key 누락 | 400 + code=MISSING_HEADER |
-| `phase9-06-validation.js` | jakarta.validation — eventId 누락 | 400 + code=VALIDATION_FAILED + fieldErrors |
-| `day2-04-burst.js` | 통합 burst — 50 VU × 4 iter (200 req) → ISSUED + SOLD_OUT 합 == 200 | errors==0, SUCCEEDED ≤ stock |
-| `day3-01-redeem-success.js` | A→B→C e2e — 발급 → Kafka consume → redeem 정상 (ADR-001/002) | redeem 200 + newlyRedeemed=true |
-| `day3-02-redeem-idempotent.js` | redeem 도메인 자체 멱등 (ADR-007) — 다른 idem 으로 재호출도 200 | newlyRedeemed=true→false + redeemedAt 동일 |
-| `day3-03-redeem-ownership-mask.js` | 다른 user 시도 → 404 마스킹 (보안), 사이드 이펙트 없음 | otherId 404 NOT_FOUND + owner 후속 멱등 |
-| `day3-04-redeem-not-found.js` | 존재하지 않는 코드 → 마스킹 일관성 | 404 NOT_FOUND + 메시지에 code 누설 안 함 |
-| `day3-05-redeem-missing-header.js` | server-c GlobalExceptionHandler — X-User-Id 누락 | 400 + code=MISSING_HEADER |
-
----
-
-## 4. 환경변수
-
-| 변수 | 기본값 | 용도 |
-|---|---|---|
-| `BASE_URL` | `http://localhost:8080` | server-a endpoint |
-| `SERVER_B_BASE_URL` | `http://localhost:8081` | server-b endpoint (헬스체크용) |
-| `SERVER_C_BASE_URL` | `http://localhost:8082` | server-c endpoint (redeem) |
-| `EVENT_ID` | `1` | stock seed 대상 이벤트 |
-| `STOCK_PER_SHARD` | `100` | 샤드별 stock (총 STOCK_PER_SHARD × 10) |
-| `WARMUP` | `5` | runner 의 CB warmup curl 수 + day2-04 setup() warmup 수 |
-| `REDEEM_RETRY_COUNT` | `20` | day3 시나리오의 발급→consume lag 흡수 retry 횟수 (총 윈도우 10초) |
-| `REDEEM_RETRY_INTERVAL_SEC` | `0.5` | retry 간격 (초). server-b poller 200ms + Kafka 발행 + server-c consume + JPA save 누적 흡수. |
-
-예: stock 200 으로 줄여 burst 의 SOLD_OUT 분포를 늘리고 싶다면
-
-```bash
-STOCK_PER_SHARD=20 ./load-test/run-integrated.sh   # 총 stock 200
-```
-
----
-
-## 5. 결과 해석
-
-### 5.1 정상 통과
-
-```
-✓ phase9-01 ~ phase9-06 모두 checks rate=100%
-[d2-04 burst] SUCCEEDED=900~1000 FAILED=200~100 RATE_LIMITED=0 CIRCUIT_BREAKER_503=0 OTHER_ERROR=0
-✓ day3-01 ~ day3-05 모두 checks rate=100%
-[verify] coupon_issue_outbox rows = (warmup 5 + phase9 발급분 + day2 SUCCEEDED + day3-01..03 발급분)
-[verify] server_c.coupon rows     = ≈ outbox rows  (used_at NOT NULL: day3 의 redeem 호출 수)
-All integrated scenarios passed.
-```
-
-### 5.2 day2-04 burst 카운터
-
-| 카운터 | HTTP | 의미 | 정상 / 이상 |
-|---|---|---|---|
-| `SUCCEEDED` | 200 + status SUCCEEDED | server-b Lua 발급 + Outbox INSERT 성공 | **정상** |
-| `FAILED` | 200 + status FAILED | SOLD_OUT (자기 샤드 재고 0) | **정상** (재고 소진의 정상 응답) |
-| `RATE_LIMITED` | 429 | 사용자당 10 req/sec 초과 | **정상** (의도된 보호) |
-| `CIRCUIT_BREAKER_503` | 503 + Retry-After | server-a CB OPEN 또는 server-b 보상 후 | **이상** — 값이 크면 cold start (warmup 부족) |
-| `OTHER_ERROR` | 그 외 | 200/429/503 외 응답 | **결함** |
-
-### 5.3 day3 시나리오의 lag 흡수
-
-day3-01/02/03 은 발급 직후 redeem 을 시도하므로 **server-b → Kafka → server-c 의 consume lag** 을
-흡수해야 한다. 시나리오 안의 `redeemWithRetry()` 가 첫 응답이 404 면 `REDEEM_RETRY_INTERVAL_SEC`
-(default 0.5초) 간격으로 `REDEEM_RETRY_COUNT` (default 20회) 까지 재시도 — 총 10초 윈도우.
-day2-04 burst 직후 outbox 에 ~100건 누적 + server-c consumer (max-poll-records=10, concurrency=1)
-가 따라잡는 시간을 흡수.
-
-`server-c.coupon rows` 가 시나리오 종료 후에도 작으면 (consume lag 이 큼) Kafka broker /
-server-c consumer 상태를 확인.
-
-### 5.4 redeem 응답의 timestamp 정밀도 hazard
-
-`Coupon.redeem(Instant.now())` 의 `now` 는 in-memory **microsecond** 정밀도 (`.123456Z`).
-이 값이 DB DATETIME(3) 에 저장되면서 **millisecond 로 rounding** (`.123456Z` → `.123Z` 또는
-`.576936Z` → `.577Z`). 그래서:
-
-- **첫 redeem 응답** (`newlyRedeemed=true`) 의 `redeemedAt` = in-memory micros (`@Transactional` 안의
-  `coupon.getUsedAt()` 그대로).
-- **idem 분기 응답** (`newlyRedeemed=false`) 의 `redeemedAt` = DB 에서 읽은 ms (rounding 적용됨).
-
-두 응답을 직접 비교하면 boundary case (`.999600Z` ≠ `1.000Z`) 에서 깨진다. day3-02 / day3-03 은
-**두 idem 응답** (둘 다 DB ms 정밀도) 을 비교해 정확히 일치 검증. 향후 `issuedAt` 등 다른 시간
-필드를 검증하는 시나리오를 추가할 때 같은 함정에 주의.
-
----
-
-## 6. 트러블슈팅
-
-### 6.1 phase9-01 의 status 가 SUCCEEDED 가 아니라 FAILED
-
-**원인**:
-- server-a 가 `local` profile 로 떴거나 (RestClient 비활성)
-- server-b 미기동
-- stock 미seed
-
-**해결**: §1.2 의 부팅 절차 다시 확인. `run-integrated.sh` 가 stock 자동 seed.
-
-### 6.2 시나리오 모두 503 (CB OPEN)
-
-**원인**: cold start 첫 호출이 read-timeout 200ms 를 초과 + CB sliding-window 의 절반 이상이 slow call 로 마킹 → OPEN.
-
-**해결**: `run-integrated.sh` 의 step 5 (warmup curl) 가 자동 회피. server-a 가 방금 부팅됐다면 충분한 시간 (10초+) 후 재실행.
-
-### 6.3 phase9-04 의 1~10 호출 중 일부가 429
-
-**원인**: 이전 실행 잔여 토큰 — Redis 의 사용자별 Bucket 이 과다 소진된 상태.
-
-**해결**: `docker exec promotion-redis redis-cli FLUSHALL` 후 재실행.
-
-### 6.4 outbox 행 수가 예상과 다름
-
-- 작음: 일부 시나리오 실패 (시나리오 출력 확인)
-- 큼: 이전 실행 행이 남음 — `run-integrated.sh` 가 자동 truncate, 실패 시 stderr 확인.
-
-### 6.5 day3-01 의 redeem 이 매번 404 (retry 5회 모두 실패)
-
-**원인**: server-b → Kafka → server-c 흐름 어딘가의 단절.
-- Kafka 컨테이너 미기동 — `docker compose up -d kafka`
-- server-b poller 가 안 돌고 있음 — `app.outbox.poller.fixed-delay-ms` (default 200) 확인
-- server-c consumer 미부팅 — `curl http://localhost:8082/actuator/health`
-- topic 자동 생성 실패 — kafka-ui (`http://localhost:8085`) 에서 `coupon.issued` 토픽 존재 확인
-
-**해결**: 위 4가지를 순서대로 점검. server-c 부팅 직후 Kafka coordinator rebalance 가 ~수초 걸리니
-부팅 직후 즉시 실행은 피한다. 평소보다 lag 가 큰 환경이면 `REDEEM_RETRY_COUNT=40` 처럼 윈도우 확장.
-
-### 6.6 day3-03 의 owner second redeem 의 redeemedAt 이 다름
-
-**원인**: 다른 user (otherId) 의 redeem 시도가 사이드 이펙트를 만들었다 — 보안 결함 또는 service 의
-검증 순서 회귀.
-
-**해결**: `RedeemCouponService` 의 분기 순서 점검 (소유권 → 멱등 → 정상). 단위 테스트
-`RedeemCouponServiceTest.redeem_masks_ownership_mismatch` 가 회귀를 막아야 함.
-
----
-
-## 7. Day 4 부하 측정 (Phase B)
-
-CLAUDE.md §2 의 실제 트래픽 시나리오 (1,000 사용자 × 10초 × 100건 = 10,000 TPS) 와 인스턴스당
-budget (500~1,000 TPS) 검증을 위한 4 시나리오. 결과 + 결정은
-[`../docs/reports/01.load-test-results.md`](../docs/reports/01.load-test-results.md) 에 정리.
-
-### 7.1 시나리오 매핑
-
 | 파일 | 부하 | 의도 |
 |---|---|---|
-| `day4-smoke.js` | 1 VU × 60s | baseline — 정상 상태의 p95/CPU/HikariCP |
-| `day4-per-instance.js` | 100 VU × 3min (~1,000 TPS) | CLAUDE.md §2 인스턴스당 budget 상단 검증 |
-| `day4-real-scenario.js` | 1,000 VU × 100 reqs (10,000 TPS) | CLAUDE.md §2 시스템 전체 부하 — 호스트 networking 한계 측정 (보고서 §3.3) |
-| `day4-spike.js` | 0→500 VU 10s ramp + 10s steady | burst 흡수 (CB 백프레셔) 검증 |
+| `issue-1k-tps.js` | constant-arrival-rate 1000 / 1s × 60s | 인스턴스당 1000 TPS 발급 부하. p95 < 200 ms / p99 < 400 ms / 5xx < 0.5% |
 
-### 7.2 일괄 실행
+ADR-001 의 "B 는 즉시 접수 완료 응답" 모델이라 응답 latency 가 짧다 (Redis HSET + Kafka publish 수 ms).
 
-```bash
-./load-test/run-day4.sh
-```
+---
 
-스크립트가 수행하는 일:
-1. **사전 헬스 체크** — server-a/b/c + Prometheus
-2. **시나리오별 reseed** — Redis FLUSHDB + MySQL truncate + stock 10,000 seed
-3. **CB warmup** — cold start 의 read-timeout 200ms 함정 회피
-4. **시나리오 4종 순차 실행**
-5. **각 시나리오 후 metric snapshot** — process_cpu / heap / hikaricp / tomcat / http p95
+## 4. 결과 해석
 
-### 7.3 부하 시 관측
+### 4.1 카운터
 
-- `http://localhost:3000` (Grafana, admin/admin) 의 **Promotion Overview** 대시보드 5 패널
-- 5s 단위 자동 갱신 — k6 실행 중 실시간 그래프 변화
-- retention 24h — 시나리오 종료 후 캡처 / 분석 가능
-- Prometheus 직접 쿼리: `max_over_time(metric[30m])` 으로 시나리오 전체 기간 peak
+| 카운터 | 의미 | 정상 |
+|---|---|---|
+| `issue_accepted` | 200 + status=ACCEPTED | 정상 |
+| `issue_duplicate` | 200 + status=DUPLICATE | 정상 (1 인 1 장 제약 자연 차단) |
+| `issue_internal_error` | 503 (CB OPEN / B 일시 장애) | 작아야 함 |
+| `issue_other` | 그 외 | 0 이어야 함 (>0 시 결함 신호) |
 
-### 7.4 호스트 한계 — 1,000 VU 측정의 주의점
+### 4.2 통과 기준 (thresholds)
 
-`day4-real-scenario.js` 는 1,000 VU 동시 시작 → 1초 안에 10,000 TCP connection. 1 macOS host
-+ colima 환경에서는 host fd / connection backlog 한계로 docker daemon 응답 불가 진입 가능.
-운영 측정은 분산 worker (k6 cloud / 별도 호스트) 필수. 본 과제는 1 host baseline 측정 +
-보고서에 호스트 한계 명시 (보고서 §3.3).
+- `http_req_duration p95 < 200ms` — Redis 적재 + Kafka publish 의 합리적 한계
+- `http_req_duration p99 < 400ms` — long tail 허용 (cold start GC 등)
+- `http_req_failed rate < 0.005` — 0.5% 이하 (Circuit Breaker 일시 OPEN 허용)
+
+### 4.3 관측
+
+부하 중 다음 지표를 함께 모니터링:
+
+- Grafana http://localhost:3000 (admin/admin) — JVM heap / CPU / HTTP p95 / HikariCP / Kafka consumer lag
+- Kafka UI http://localhost:8085 — `coupon-issue-request` / `coupon-issue-result` lag
+
+---
+
+## 5. 트러블슈팅
+
+| 증상 | 원인 | 해결 |
+|---|---|---|
+| 시나리오 첫 ~수초 503 다발 | Cold start, CB sliding window 가 slow call 로 OPEN | warmup 필요 — 시나리오 시작 전 1~2회 단발 호출 |
+| 모두 DUPLICATE | 이전 run 의 Redis pending 잔존 | `docker exec promotion-redis redis-cli FLUSHDB` |
+| `issue_other > 0` | 4xx — body invalid 또는 마스터 데이터(event/coupon_type) 미시드 | §1.3 시드 SQL 실행 |
+| C consumer lag 폭증 | 1 vCPU MySQL-C 의 비관적 락 처리량 한계 도달 | `app.kafka.consumer.concurrency`/`max-poll-records` 조정 또는 인스턴스 추가 |

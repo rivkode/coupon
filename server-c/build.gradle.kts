@@ -14,10 +14,15 @@ dependencies {
 	implementation("org.flywaydb:flyway-core")
 	implementation("org.flywaydb:flyway-mysql")
 
-	// Server B 의 Outbox poller 가 발행한 coupon.issued 메시지를 consume (CLAUDE.md ADR-002).
-	// at-least-once + (user_id, idempotency_key) UNIQUE 로 의미적 exactly-once.
+	// ADR-002: Outbox poller 가 coupon-issue-result publish, Kafka consumer 가 coupon-issue-request consume.
+	// at-least-once + (user_id, coupon_type_id) UNIQUE 로 의미적 exactly-once.
 	implementation("org.springframework.kafka:spring-kafka")
 	testImplementation("org.springframework.kafka:spring-kafka-test")
+
+	// 비관적 락 정합성 검증용 — 실제 MySQL InnoDB 와 통합 테스트.
+	testImplementation(platform("org.testcontainers:testcontainers-bom:1.20.4"))
+	testImplementation("org.testcontainers:junit-jupiter")
+	testImplementation("org.testcontainers:mysql")
 
 	implementation("io.micrometer:micrometer-registry-prometheus")
 }
@@ -25,3 +30,4 @@ dependencies {
 tasks.named<Jar>("jar") {
 	enabled = false
 }
+
