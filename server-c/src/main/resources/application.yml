@@ -26,6 +26,19 @@ spring:
     enabled: true
     baseline-on-migrate: false
     locations: classpath:db/migration
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 1000ms
+      connect-timeout: 1000ms
+      lettuce:
+        pool:
+          enabled: true
+          max-active: 16
+          max-idle: 8
+          min-idle: 2
+          max-wait: 500ms
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:29092}
     admin:
@@ -103,3 +116,9 @@ app:
   outbox:
     poll-interval-ms: ${OUTBOX_POLL_INTERVAL_MS:500}
     batch-size: ${OUTBOX_BATCH_SIZE:50}
+  # 평가항목 ③ — event 조회 캐시 + Refresh-Ahead 로 stampede 방지.
+  # TTL 만료 시점 동시 다량 요청이 DB 로 밀리는 패턴을 회피하기 위해 백그라운드 스케줄러가
+  # status=IN_PROGRESS 인 모든 이벤트의 캐시를 주기적으로 갱신 — TTL 만료 자체가 일어나지 않음.
+  event-cache:
+    ttl-seconds: ${EVENT_CACHE_TTL_SECONDS:300}                # 5 분
+    refresh-interval-ms: ${EVENT_CACHE_REFRESH_MS:60000}       # 1 분 (TTL/5 — 항상 4 분+ 살아있음)
