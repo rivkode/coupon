@@ -3,9 +3,6 @@ spring:
     name: server-c
   threads:
     virtual:
-      # Phase C — Java 21 가상 스레드 활성화. Kafka consumer 처리 + redeem API 의 동시성 헤드룸 확보.
-      # Trade-off: server-c 는 본 측정에서 active~1 이라 가상 스레드의 직접 효과는 작음. 단,
-      # redeem 트래픽 증가 / consumer concurrency 확장 시 자연스러운 스케일을 위한 사전 도입.
       enabled: true
   datasource:
     url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/server_c?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
@@ -13,15 +10,13 @@ spring:
     password: ${DB_PASSWORD:promotion}
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
-      # Phase C — pool 10 유지 (보고서 §5.3 갱신).
-      # server-c 는 Kafka consumer (concurrency=1, max-poll-records=10) + redeem API.
-      # 동시 처리 ~10건 + read query 가벼움 — pool 10 충분. Phase B 측정에서도 active~1.
+      # ADR-003: 발급은 Kafka consumer 안의 비관적 락 트랜잭션. concurrency 1~2 + max-poll-records 10~50
+      # 기준이라 동시 connection 수요는 작음. redeem API 대비 헤드룸 포함 pool 10.
       maximum-pool-size: ${HIKARI_POOL_SIZE:10}
       connection-timeout: 3000
       validation-timeout: 1000
   jpa:
     hibernate:
-      # Flyway 가 스키마 진실 — JPA 는 검증만.
       ddl-auto: validate
     properties:
       hibernate:
@@ -31,21 +26,29 @@ spring:
     enabled: true
     baseline-on-migrate: false
     locations: classpath:db/migration
-  # Kafka consumer (Server B 의 Outbox poller 가 발행한 coupon.issued 메시지 수신).
-  # ADR-002: at-least-once 발행 + UNIQUE constraint = 의미적 exactly-once.
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:29092}
+    admin:
+      operation-timeout: 5s
+      fail-fast: false
+    # ADR-002: at-least-once outbox publish + idempotent producer.
+    producer:
+      acks: all
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
+        delivery.timeout.ms: 30000
+        request.timeout.ms: 5000
+        linger.ms: 5
+      retries: 5
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
     consumer:
-      group-id: coupon-server-c
-      # 신규 group 부팅 시 가장 처음부터 (Outbox 적재된 모든 발급 이벤트 소비).
+      group-id: coupon-issue-server-c
       auto-offset-reset: earliest
-      # auto-commit 비활성 — Spring Kafka 가 RECORD ack-mode (아래 listener.ack-mode) 에 따라
-      # listener 정상 종료 시 record 단위로 offset commit. throw 발생 시 commit 안 됨 →
-      # DefaultErrorHandler 가 retry 처리.
       enable-auto-commit: false
-      # transactional producer 는 본 과제 외이지만 정책 명시 — committed 메시지만 소비.
       isolation-level: read_committed
-      # 1 vCPU 환경 — 한 번에 너무 많이 끌어오면 처리 시간 길어져 rebalance 위험.
+      # ADR-009: 1 vCPU MySQL-C 의 비관적 락 처리량을 보호하기 위한 throttle.
       max-poll-records: 10
       properties:
         max.poll.interval.ms: 300000
@@ -53,11 +56,9 @@ spring:
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
     listener:
-      # 메시지별 즉시 ack — 실패 메시지 단위 격리 (정합성 우선).
       ack-mode: RECORD
       type: SINGLE
-      # 1 vCPU 환경에선 컨텍스트 스위칭 비용 > 병렬성 이득. partition 3 개를 단일 consumer 가 처리.
-      # 트레이드오프: 단일 인스턴스 처리량 ≤ partition 1 개 단위 처리 속도. README 명시.
+      # ADR-009: 단일 consumer 가 partition 을 처리. 처리량 < partition 1 개 단위.
       concurrency: 1
 
 server:
@@ -65,8 +66,6 @@ server:
   shutdown: graceful
   tomcat:
     mbeanregistry:
-      # tomcat_threads_busy / config_max metric 노출 (Spring Boot 기본 OFF — JMX 등록 비용 회피).
-      # Day 4 Grafana 패널 측정 목적. 부팅 시 1회 mbean 등록 — 런타임 overhead 무시할 수준.
       enabled: true
 
 management:
@@ -82,8 +81,6 @@ management:
   metrics:
     distribution:
       percentiles-histogram:
-        # http_server_requests_seconds_bucket 노출 — Prometheus histogram_quantile 가능 (p95 패널).
-        # Trade-off: bucket 시리즈 폭증 위험은 endpoint 가 많은 서비스 영역 — 본 과제는 1~2 endpoint 라 안전.
         http.server.requests: true
 
 logging:
@@ -96,5 +93,13 @@ logging:
 app:
   kafka:
     topic:
-      # Server B 의 application.yml 과 default 정합 — 동일 topic 이름 공유.
-      coupon-issued: ${KAFKA_TOPIC_COUPON_ISSUED:coupon.issued}
+      issue-request: ${KAFKA_TOPIC_ISSUE_REQUEST:coupon-issue-request}
+      issue-result: ${KAFKA_TOPIC_ISSUE_RESULT:coupon-issue-result}
+      partitions: ${KAFKA_TOPIC_PARTITIONS:3}
+      replication-factor: ${KAFKA_TOPIC_RF:1}
+    send-timeout-ms: ${KAFKA_SEND_TIMEOUT_MS:3000}
+    consumer:
+      concurrency: ${KAFKA_CONSUMER_CONCURRENCY:1}
+  outbox:
+    poll-interval-ms: ${OUTBOX_POLL_INTERVAL_MS:500}
+    batch-size: ${OUTBOX_BATCH_SIZE:50}
