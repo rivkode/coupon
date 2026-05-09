@@ -221,6 +221,8 @@ services:
       KAFKA_BOOTSTRAP: kafka:9092
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      EVENT_CACHE_TTL_SECONDS: ${EVENT_CACHE_TTL_SECONDS:-300}
+      EVENT_CACHE_REFRESH_MS: ${EVENT_CACHE_REFRESH_MS:-60000}
     depends_on:
       mysql:
         condition: service_healthy
