@@ -1,13 +1,9 @@
 # 로컬 개발 프로파일.
-# 활성화: `./gradlew :server-b:bootRun --args='--spring.profiles.active=local'`
+# 활성화: ./gradlew :server-b:bootRun --args='--spring.profiles.active=local'
 spring:
   config:
     activate:
       on-profile: local
-  datasource:
-    url: jdbc:mysql://localhost:3306/server_b?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
-    username: ${DB_USER:promotion}
-    password: ${DB_PASSWORD:promotion}
   data:
     redis:
       host: localhost
@@ -17,4 +13,3 @@ logging:
   level:
     com.promotion: DEBUG
     org.springframework.web: DEBUG
-    org.hibernate.SQL: DEBUG
