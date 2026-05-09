@@ -3,27 +3,23 @@ spring:
     name: server-a
   threads:
     virtual:
-      # Phase C — Java 21 가상 스레드 활성화. Tomcat platform thread max=200 한계 폐기.
-      # 1 vCPU 환경에서 carrier thread 가 가상 스레드 다중화 — I/O wait 동안 carrier 반환 → 더 많은 동시 처리.
-      # Trade-off: synchronized block / native code = pinning 위험. Spring Web + JDBC + HikariCP 는 가상 스레드 친화 (검증됨).
       enabled: true
   datasource:
-    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/server_a?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&rewriteBatchedStatements=true
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/server_a?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
     username: ${DB_USER:promotion}
     password: ${DB_PASSWORD:promotion}
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
-      # Phase C — pool 10 유지 (보고서 §5.3 갱신).
-      # batch insert 가 critical path 의 connection 점유를 0 으로 만들어 (큐 enqueue → scheduler flush)
-      # pool 큰 의미 사라짐. 평균 사용 ~6 conn (batch flusher 1 + 동기 fallback 수개 + read).
-      # 1 vCPU 환경 / MySQL default max_connections=151 (3 × 10 = 30, 20% 만 사용) 에 정합.
-      # ${HIKARI_POOL_SIZE} env 로 운영 시 override 가능.
-      maximum-pool-size: ${HIKARI_POOL_SIZE:10}
+      # ADR-010: per-request commit (batch insert 미사용). 신규 흐름은 응답이 즉시 "접수 완료" 라
+      # latency 가 짧음 → 별도 큐 불필요. 1 vCPU MySQL-A 의 commit 처리량은 측정 후 결정.
+      # 1 vCPU 환경에서 너무 큰 pool 은 context switching 비용으로 한계 효용이 떨어진다.
+      # 측정 결과 (docs/reports/load-test-bottleneck-analysis.md) — pool=10 은 동시성 부족,
+      # pool=50 은 server-b 가 다음 병목 → pool=20 이 헤드룸 + 효율의 균형점.
+      maximum-pool-size: ${HIKARI_POOL_SIZE:20}
       connection-timeout: 3000
       validation-timeout: 1000
   jpa:
     hibernate:
-      # Flyway 가 스키마 진실 — JPA 는 검증만.
       ddl-auto: validate
     properties:
       hibernate:
@@ -33,34 +29,19 @@ spring:
     enabled: true
     baseline-on-migrate: false
     locations: classpath:db/migration
-  data:
-    redis:
-      host: ${REDIS_HOST:localhost}
-      port: ${REDIS_PORT:6379}
-      timeout: 1000ms
-      connect-timeout: 1000ms
-      lettuce:
-        pool:
-          enabled: true
-          max-active: 16
-          max-idle: 8
-          min-idle: 2
-          max-wait: 500ms
 
 server:
   port: 8080
   shutdown: graceful
   tomcat:
     mbeanregistry:
-      # tomcat_threads_busy / config_max metric 노출 (Spring Boot 기본 OFF — JMX 등록 비용 회피).
-      # Day 4 Grafana 패널 측정 목적. 부팅 시 1회 mbean 등록 — 런타임 overhead 무시할 수준.
       enabled: true
 
 management:
   endpoints:
     web:
       exposure:
-        include: health, info, metrics, prometheus, circuitbreakers, ratelimiters
+        include: health, info, metrics, prometheus, circuitbreakers
   endpoint:
     health:
       show-details: when-authorized
@@ -69,53 +50,26 @@ management:
   metrics:
     distribution:
       percentiles-histogram:
-        # http_server_requests_seconds_bucket 노출 — Prometheus histogram_quantile 가능 (p95 패널).
-        # Trade-off: bucket 시리즈 폭증 위험은 endpoint 가 많은 서비스 영역 — 본 과제는 1~2 endpoint 라 안전.
-        # 운영 진화 시 SLO endpoint 만 화이트리스트 권장.
         http.server.requests: true
 
 logging:
   pattern:
-    # traceId / spanId 는 Day 1 단계에선 MDC 미주입 (Phase 7 이후 보강).
     level: "%5p"
   level:
     root: INFO
     com.promotion: INFO
     org.springframework.web: INFO
 
-# 애플리케이션 정책 값. ADR 기반 기본값 + 환경변수 override.
 app:
-  # Phase C — IssueRequest batch insert 정책 (보고서 §5.1).
-  # 5층 방어: bounded queue + 동기 fallback + graceful shutdown + heap 모니터링 + (운영) persistent queue
-  batch:
-    queue:
-      capacity: ${BATCH_QUEUE_CAPACITY:1000}    # ArrayBlockingQueue 상한 (~수십 KB 메모리)
-    flush:
-      interval-ms: ${BATCH_FLUSH_INTERVAL_MS:200}   # @Scheduled fixedDelay
-      max-size: ${BATCH_FLUSH_MAX_SIZE:100}         # 한 batch 의 max row 수
-    heap:
-      high-watermark: ${BATCH_HEAP_HIGH:0.80}    # heap 80% 도달 → rejecting 모드 (방어선 4)
-      low-watermark:  ${BATCH_HEAP_LOW:0.70}     # heap 70% 회복 → rejecting 해제
-      check-interval-ms: ${BATCH_HEAP_CHECK_MS:5000}
   server-b:
-    # Server B 의 internal API. Stub profile 에서는 미사용.
-    # 포트: server-a=8080, server-b=8081, server-c=8082 (PR #8 에서 server-b 포트 8081 확정).
     base-url: ${SERVER_B_URL:http://localhost:8081}
     connect-timeout-millis: 1000
-    read-timeout-millis: 200    # ADR-001: A→B 호출 timeout
-  rate-limit:
-    user:
-      # ADR-005: 사용자당 10 req/sec. burst 는 capacity = refill 로 평탄화.
-      capacity: ${RATE_LIMIT_CAPACITY:10}
-      refill-tokens: ${RATE_LIMIT_REFILL_TOKENS:10}
-      refill-period-seconds: ${RATE_LIMIT_REFILL_SECONDS:1}
-  idempotency:
-    # ADR-004: Idempotency-Key 응답 캐시 TTL.
-    ttl-hours: ${IDEMPOTENCY_TTL_HOURS:24}
+    # ADR-001: B 는 Redis 적재 + Kafka publish 후 즉시 응답.
+    # 측정 결과 500ms 는 1000 TPS 부하에서 slow-call 로 분류되어 CB 가 false-positive OPEN.
+    # 응답 모델이 "접수 완료" 라 1s latency 허용 (docs/reports/load-test-bottleneck-analysis.md).
+    read-timeout-millis: 1000
 
-# A→B 호출 보호 (CLAUDE.md ADR-001).
-# read-timeout 200ms 는 RestClient HTTP 레벨 (Resilience4j TimeLimiter 미사용 — 동기 인터페이스 유지).
-# Circuit Breaker 가 그 timeout 실패와 5xx 를 카운트해서 OPEN 결정.
+# ADR-001: A→B 호출 보호. Circuit Breaker 만 사용 (Bucket4j / Bulkhead 미사용).
 resilience4j:
   circuitbreaker:
     instances:
@@ -123,18 +77,10 @@ resilience4j:
         sliding-window-type: COUNT_BASED
         sliding-window-size: 20
         minimum-number-of-calls: 10
-        failure-rate-threshold: 50          # 50% 실패 → OPEN
+        failure-rate-threshold: 50
         slow-call-rate-threshold: 50
-        slow-call-duration-threshold: 200ms # 200ms 초과 = slow
+        slow-call-duration-threshold: 500ms
         wait-duration-in-open-state: 5s
         permitted-number-of-calls-in-half-open-state: 3
         automatic-transition-from-open-to-half-open-enabled: true
         register-health-indicator: true
-  # Phase C — system-wide admission control (CLAUDE.md ADR-005, 보고서 §5.2).
-  # 동시 50 처리 + 초과는 즉시 fail (semaphore 0 wait) → fallback 으로 503 + Retry-After.
-  # 50 = 보고서 §7.6 단계 4 — 헤드룸 30% 안전 영역 (1 vCPU 가 안전하게 처리 가능한 동시성).
-  bulkhead:
-    instances:
-      issueRequestBulkhead:
-        max-concurrent-calls: ${BULKHEAD_MAX_CONCURRENT:50}
-        max-wait-duration: 0ms      # 큐 없음 — 즉시 거부 (Tomcat queue 와 두 단계 큐 회피)

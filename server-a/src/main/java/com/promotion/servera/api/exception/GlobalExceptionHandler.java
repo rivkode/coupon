@@ -3,11 +3,8 @@ package com.promotion.servera.api.exception;
 import com.promotion.servera.api.dto.ApiResponse;
 import com.promotion.servera.api.dto.ErrorResponse;
 import com.promotion.servera.api.dto.ErrorResponse.FieldError;
-import io.github.resilience4j.bulkhead.BulkheadFullException;
-import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -17,23 +14,8 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
-/**
- * 전역 예외 핸들러.
- *
- * <p>Day 3 redeem API 도입 시 BusinessException 계층(CouponAlreadyRedeemedException 등) 추가 예정.
- * 현재 PR(Day 1) 은 표준 JDK/Spring 예외만 매핑하며, 도메인 상태 위반은 IllegalStateException 으로 처리한다.
- *
- * <p>매핑:
- * <ul>
- *   <li>MethodArgumentNotValidException → 400 (필드별 에러)</li>
- *   <li>MissingRequestHeaderException → 400 (X-User-Id / Idempotency-Key 누락)</li>
- *   <li>HttpMessageNotReadableException → 400 (잘못된 JSON)</li>
- *   <li>MethodArgumentTypeMismatchException → 400 (헤더/path 타입 불일치)</li>
- *   <li>IllegalArgumentException → 400 (도메인 인자 검증 실패)</li>
- *   <li>IllegalStateException → 409 (도메인 상태 전이 실패)</li>
- *   <li>그 외 RuntimeException → 500 (메시지 마스킹 + ERROR 로그)</li>
- * </ul>
- */
+import java.util.List;
+
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
@@ -42,17 +24,17 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ApiResponse<Void>> handleValidation(MethodArgumentNotValidException ex) {
         List<FieldError> fieldErrors = ex.getBindingResult().getFieldErrors().stream()
-            .map(fe -> new FieldError(fe.getField(), fe.getDefaultMessage()))
-            .toList();
+                .map(fe -> new FieldError(fe.getField(), fe.getDefaultMessage()))
+                .toList();
         ErrorResponse error = ErrorResponse.withFields(
-            "VALIDATION_FAILED", "request body validation failed", fieldErrors);
+                "VALIDATION_FAILED", "request body validation failed", fieldErrors);
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ApiResponse.failure(error));
     }
 
     @ExceptionHandler(MissingRequestHeaderException.class)
     public ResponseEntity<ApiResponse<Void>> handleMissingHeader(MissingRequestHeaderException ex) {
         ErrorResponse error = ErrorResponse.of(
-            "MISSING_HEADER", "required header missing: " + ex.getHeaderName());
+                "MISSING_HEADER", "required header missing: " + ex.getHeaderName());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ApiResponse.failure(error));
     }
 
@@ -65,7 +47,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
     public ResponseEntity<ApiResponse<Void>> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
         ErrorResponse error = ErrorResponse.of(
-            "TYPE_MISMATCH", "argument type mismatch: " + ex.getName());
+                "TYPE_MISMATCH", "argument type mismatch: " + ex.getName());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ApiResponse.failure(error));
     }
 
@@ -79,20 +61,6 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleIllegalState(IllegalStateException ex) {
         ErrorResponse error = ErrorResponse.of("INVALID_STATE", ex.getMessage());
         return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiResponse.failure(error));
-    }
-
-    /**
-     * Phase C — Resilience4j Bulkhead 가 max-concurrent-calls 초과 시 던짐.
-     * 시스템 capacity 초과 트래픽 → 503 + Retry-After. CB 의 503 과 동일한 사용자 경험.
-     * (보고서 §5.2, ADR-005 "큐 가득 차면 503")
-     */
-    @ExceptionHandler(BulkheadFullException.class)
-    public ResponseEntity<ApiResponse<Void>> handleBulkheadFull(BulkheadFullException ex) {
-        ErrorResponse error = ErrorResponse.of(
-            "ADMISSION_CONTROL", "system at capacity, please retry");
-        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-            .header(HttpHeaders.RETRY_AFTER, "1")
-            .body(ApiResponse.failure(error));
     }
 
     @ExceptionHandler(Exception.class)

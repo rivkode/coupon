@@ -9,22 +9,11 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
-import jakarta.persistence.Version;
+
 import java.time.Instant;
-import lombok.AccessLevel;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
-import org.hibernate.annotations.CreationTimestamp;
-import org.hibernate.annotations.UpdateTimestamp;
 
 @Entity
 @Table(name = "issue_request")
-@Getter
-@NoArgsConstructor(access = AccessLevel.PROTECTED)
-@AllArgsConstructor(access = AccessLevel.PRIVATE)
-@Builder
 class IssueRequestJpaEntity {
 
     @Id
@@ -40,28 +29,34 @@ class IssueRequestJpaEntity {
     @Column(name = "event_id", nullable = false)
     private Long eventId;
 
-    @Column(name = "idempotency_key", nullable = false, length = 64)
-    private String idempotencyKey;
+    @Column(name = "coupon_type_id", nullable = false)
+    private Long couponTypeId;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 16)
+    @Column(name = "status", nullable = false, length = 20)
     private IssueRequestStatus status;
 
-    @Column(name = "coupon_code", length = 12)
-    private String couponCode;
-
-    @Column(name = "failure_reason", length = 255)
-    private String failureReason;
-
-    @Version
-    @Column(nullable = false)
-    private Long version;
-
-    @CreationTimestamp
-    @Column(name = "created_at", nullable = false, updatable = false)
+    @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
     private Instant createdAt;
 
-    @UpdateTimestamp
-    @Column(name = "updated_at", nullable = false)
-    private Instant updatedAt;
+    protected IssueRequestJpaEntity() {}
+
+    IssueRequestJpaEntity(Long id, String requestId, Long userId, Long eventId,
+                          Long couponTypeId, IssueRequestStatus status, Instant createdAt) {
+        this.id = id;
+        this.requestId = requestId;
+        this.userId = userId;
+        this.eventId = eventId;
+        this.couponTypeId = couponTypeId;
+        this.status = status;
+        this.createdAt = createdAt;
+    }
+
+    Long getId() { return id; }
+    String getRequestId() { return requestId; }
+    Long getUserId() { return userId; }
+    Long getEventId() { return eventId; }
+    Long getCouponTypeId() { return couponTypeId; }
+    IssueRequestStatus getStatus() { return status; }
+    Instant getCreatedAt() { return createdAt; }
 }
