@@ -1,118 +1,180 @@
 # promotion
 
-**콘서트 사전 예매 할인 쿠폰 — 선착순 10,000장** 시나리오를 1 vCPU / 2 GB RAM 노드 3대 (Server A / B / C) 로 처리하는 분산 시스템 구현.
+**이벤트별 선착순 할인 쿠폰 발급 및 사용** 시스템을 1 vCPU / 2 GB RAM 노드 3 대 (Server A / B / C) 로 처리하는 분산 시스템 구현.
 
-핵심 명제: 인프라 제약을 **소프트웨어 (큐 + 비동기 + 백프레셔 + 분산 캐시)** 로 푼다.
+핵심 명제: 인프라 제약(1 vCPU) 을 **소프트웨어 (비동기 + 비관적 락 + Kafka throttle + Outbox)** 로 푼다.
+
+설계 출처: [`docs/rivkode_system_design.md`](docs/rivkode_system_design.md) (source of truth)
 
 ---
 
 ## 평가자 가이드
 
-본 README 는 entry point 역할만. 각 영역의 상세는 카테고리별 폴더에 분리되어 있습니다.
+본 README 는 entry point. 상세는 카테고리별 폴더에 분리.
 
-### 1) 5축 평가 항목 → 어디서 다뤘는가
+### 1) 5 축 평가 항목 → 어디서 다뤘는가
 
-| # | 평가 항목 | 핵심 기법 | 코드 위치 | 결정 문서 | k6 검증 |
-|---|---|---|---|---|---|
-| ① | 대량 트래픽 + 동시성 | HikariCP, batch insert (Phase C 조건부 결정) | `server-a/.../IssueRequestService` | [server-a-tuning](docs/decisions/server-a-tuning-load-test-driven.md) | `day2-04-burst.js` |
-| ② | 분산 정합성 + 멱등성 | Saga + Outbox + UNIQUE 3 단계 | `server-b/.../OutboxPoller`, `server-c/.../CouponConsumer` | [outbox-mysql-vs-redis-streams](docs/decisions/outbox-mysql-vs-redis-streams.md), [server-b-outbox-poller-kafka](docs/decisions/server-b-outbox-poller-kafka.md) | `day3-01..04` |
-| ③ | Hot Spot 회피 | Redis 재고 10 샤드 + Lua atomic | `server-b/.../RedisStockClient`, `issue-coupon.lua` | [`04.Data-Stores`](docs/architecture/04.Data-Stores.md) §3 | (Phase B 측정) |
-| ④ | Rate Limit / Backpressure | Bucket4j Lettuce + Resilience4j CB | `server-a/.../RateLimitFilter`, `CouponIssuingRestClient` | CLAUDE.md ADR-005 | `phase9-04-rate-limit.js` |
-| ⑤ | 인프라 사이징 | k6 부하 + Little's Law + Grafana | [Day 4 측정 보고서](docs/reports/01.load-test-results.md) | [server-a-tuning](docs/decisions/server-a-tuning-load-test-driven.md) | `day4-{smoke,per-instance,real-scenario,spike}.js` |
+| # | 평가 항목 | 핵심 기법 | 코드 위치 |
+|---|---|---|---|
+| ① | 대량 트래픽 + 동시성 | A 진입 단순화 + per-request commit / C 의 1 트랜잭션 비관적 락 + Outbox | `server-a/.../IssueRequestService`, `server-c/.../CouponIssueProcessor` |
+| ② | 분산 정합성 + 멱등성 | Saga(choreography) + C 의 Outbox + `(user_id, coupon_type_id)` UNIQUE | `server-c/.../OutboxPoller`, `server-c/.../UserCouponJpaEntity` (UNIQUE) |
+| ③ | 캐시 + Hot Spot | Redis 의 pending 신청 적재 + `event:{id}` Cache-Aside (TTL) | `server-b/.../RedisIssueRequestStore`, `server-b/.../EventCacheService` |
+| ④ | Rate Limit / Backpressure | Kafka consumer throttle (`max.poll.records` / `concurrency`) + A↔B Resilience4j Circuit Breaker + B 의 `@Scheduled` 보완 | `server-c/.../KafkaConfig`, `server-a/.../RestClientCouponIssuingClient`, `server-b/.../PendingIssueScheduler` |
+| ⑤ | 인프라 사이징 | k6 부하 + Little's Law 기반 인스턴스 산정 | `load-test/scenarios/` |
 
-### 2) 가장 보고싶은 부분만 빨리 보기
+### 2) 빠르게 보고 싶은 것
 
-- **30분 follow-along** → [설계 결정 + 트레이드오프 — 코드 따라가기 투어](docs/walkthrough/01.design-decisions-tour.md) — 15 주요 결정 + 코드 위치 + 30분 코스
-- **시스템 한눈** → [아키텍처 개요](docs/architecture/01.Overview.md) (5분)
-- **핵심 흐름 시각화** → [시퀀스 다이어그램](docs/architecture/03.Sequence-Diagrams.md) (정상 / 보상 / SOLD_OUT / redeem race)
-- **결정 + 거부된 대안** → [결정 (ADR) 인덱스](docs/decisions/README.md)
-- **장애 시나리오 (각 단계에서 죽으면?)** → [`failure-modes.md`](docs/runbooks/failure-modes.md)
-- **의도적으로 안 한 것** → [`scope-decisions.md`](docs/decisions/scope-decisions.md)
-- **요구사항 해석 — 채용팀 문의** → [`recruiting-team-questions.md`](docs/clarifications/recruiting-team-questions.md) — 본 산출물의 가정 (트래픽 시나리오 / 100,000명 정의 / 계산 근거 형태)
-- **검증** → [`load-test/README.md`](load-test/README.md) — 12개 e2e 시나리오 한 번에 실행
+- **신규 설계 출처** → [`docs/rivkode_system_design.md`](docs/rivkode_system_design.md)
+- **아키텍처 개요 + 데이터 흐름 + 5 축 매핑** → [`docs/architecture/01.Overview.md`](docs/architecture/01.Overview.md)
+- **결정 (ADR) 본문** → [`CLAUDE.md` §6](./CLAUDE.md) (인덱스: [`docs/decisions/README.md`](docs/decisions/README.md))
+- **부하 검증** → [`load-test/README.md`](load-test/README.md)
 
 ---
 
-## 빠른 실행 (권장 — 자원 제약 강제)
+## 인증
 
-평가 5축 ⑤ (사이징) 의 전제인 **각 서비스 1 vCPU / 2 GB RAM** 을 컨테이너 단위로 강제. 부하 측정 / 사이징 검증의 신뢰성을 위해 본 모드로 실행 권장.
+본 과제는 단순화를 위해 **JWT 등 외부 인증 시스템을 도입하지 않고 `X-User-Id` 헤더로 대체**합니다. 모든 API 호출은 `X-User-Id` 헤더로 사용자를 식별하며, 상위 게이트웨이(API Gateway / OAuth2 Resource Server 등)가 인증 후 user_id 를 추출해 헤더로 전달하는 운영 모델을 가정합니다.
+
+```
+Authorization: Bearer <jwt>     ← (운영) 상위 게이트웨이가 검증
+                ↓ 검증 + user_id 추출
+X-User-Id: <user_id>            ← 본 시스템이 받는 형태
+```
+
+평가 환경에서는 클라이언트가 직접 `X-User-Id` 헤더를 보냅니다.
+
+---
+
+## 발급 요청 (User → Server A)
+
+`POST /api/v1/coupons/issue-request`
+
+| 헤더 | 필수 | 의미 |
+|---|---|---|
+| `X-User-Id` | ✅ | 사용자 식별자 (JWT 대체 — 위 §인증 참조) |
+
+**body — 10 필드** (필수: country, eventId, couponTypeId, channel, issuedAt, expireAt / 선택: deviceId, clientVersion, language, marketingConsent)
+
+```json
+{
+  "country": "KR",
+  "eventId": 202605,
+  "couponTypeId": 1,
+  "issuedAt": "2026-05-09T20:00:00Z",
+  "expireAt": "2026-06-09T23:59:59Z",
+  "channel": "APP",
+  "deviceId": "abc-12345",
+  "clientVersion": "3.2.1",
+  "language": "ko",
+  "marketingConsent": true
+}
+```
+
+응답: 즉시 `200 OK` + `{ requestId, status: ACCEPTED|DUPLICATE }`. 실제 발급 결과는 폴링/내정보 조회로 비동기 확인.
+
+---
+
+## 시스템 아키텍처
+
+```
+[User] ──HTTPS──▶ [Server A] ──sync HTTP──▶ [Server B] ──Kafka(issue)──▶ [Server C]
+                  진입/요청 로그              Redis 적재 / 즉시 응답         재고 차감 / 영구 저장
+                       │                          │   ▲                       │
+                    [MySQL-A]                  [Redis] │                   [MySQL-C]
+                  issue_request               pending  │ Kafka(result)       event 마스터
+                  (per-request commit)        user 신청 ◀─────────────────── coupon_type
+                                              event cache                    coupon_type_inventory
+                                              @Scheduled (10s)               user_coupon
+                                                                             outbox_event
+```
+
+**핵심 명제**
+
+- **응답 모델**: 사용자는 발급 요청 시 즉시 "접수 완료" 만 받고, 결과는 폴링/내정보 조회로 비동기 확인
+- **재고 권위**: Server C 의 `coupon_type_inventory` row + `SELECT ... FOR UPDATE` 비관적 락
+- **멱등성**: `(user_id, coupon_type_id)` UNIQUE 가 1 인 1 장 + 중복 Kafka 메시지를 동시에 보장
+- **Backpressure**: B → C Kafka consumer 의 `max.poll.records` / `concurrency` 로 1 vCPU MySQL-C 가 처리 가능한 양만 흘림
+- **Kafka 양방향**: B → C (발급 신청) / C → B (발급 결과 → Redis 캐시 갱신) — 사용자 폴링 시 B 의 Redis 만 조회
+- **보완 메커니즘**: B 의 `@Scheduled` 가 10 초 이상 pending 인 신청을 C 의 internal GET API 로 직접 조회 → Kafka 메시지 유실 방어
+
+---
+
+## 도메인 모델
+
+### Server A (MySQL — schema `server_a`)
+- `issue_request` (request_id, user_id, event_id, coupon_type_id, status, created_at)
+
+### Server B (Redis only)
+- `issue:pending:{user_id}:{coupon_type_id}` — Hash (status / created_at / event_id / request_id)
+- `issue:pending:zset` — Sorted Set, score = created_at (스케줄러 ZRANGEBYSCORE)
+- `event:{event_id}` — Hash (cache, TTL)
+
+### Server C (MySQL — schema `server_c`)
+- `event`, `coupon_type`, `coupon_type_inventory`, `user_coupon`, `outbox_event`
+- UNIQUE: `user_coupon (user_id, coupon_type_id)`, `user_coupon (code)`
+
+### Kafka 토픽
+- `coupon-issue-request` (B → C)
+- `coupon-issue-result` (C → B)
+
+---
+
+## 빠른 실행
+
+평가 5 축 ⑤(사이징) 의 전제인 **각 서비스 1 vCPU / 2 GB RAM** 을 컨테이너 단위로 강제. 부하 측정 신뢰성을 위해 본 모드 권장.
 
 ```bash
 # 1) bootJar 빌드 (호스트에서)
 ./gradlew clean :server-a:bootJar :server-b:bootJar :server-c:bootJar -x test
 
-# 2) 인프라 + 3 서비스 한 번에 부팅 (각 서비스 cpus=1 + mem=2g 강제)
+# 2) 인프라 + 3 서비스 부팅 (각 서비스 cpus=1 + mem=2g)
 docker compose up -d --build
 
-# 3) 헬스 확인 (모두 UP 까지 ~30~60초)
-docker compose ps           # 모든 컨테이너 healthy
+# 3) 헬스 확인
+docker compose ps
 curl -sS http://localhost:8080/actuator/health   # server-a
 curl -sS http://localhost:8081/actuator/health   # server-b
 curl -sS http://localhost:8082/actuator/health   # server-c
 
-# 4) 검증 — 12개 e2e 시나리오
+# 4) 검증 — k6 통합 시나리오
 ./load-test/run-integrated.sh
 
-# 5) (Day 4) 관측성 — Grafana 대시보드
-#    http://localhost:3000  (admin/admin) → 좌측 메뉴 Dashboards → Promotion 폴더 → "Promotion Overview"
-#    JVM heap / CPU / HTTP p95 / HikariCP active / Tomcat busy 5 패널 (server-a/b/c 오버레이)
-#    Prometheus 원본: http://localhost:9090
+# 5) 관측성 — Grafana 대시보드
+#    http://localhost:3000  (admin/admin) → Promotion 폴더 → Promotion Overview
 ```
 
-### 개발 편의 — bootRun 모드 (자원 제약 없음, 빠른 부팅)
+### 개발 편의 — bootRun 모드 (자원 제약 없음)
 
 ```bash
 docker compose up -d mysql redis kafka                   # 인프라만
+./gradlew :server-c:bootRun &
 ./gradlew :server-b:bootRun --args='--spring.profiles.active=local' &
 ./gradlew :server-a:bootRun &
-./gradlew :server-c:bootRun &
 ./load-test/run-integrated.sh
 ```
 
-> bootRun 모드는 호스트 자원을 무제한 사용 — **사이징 / 부하 측정에는 부적합**. 코드 변경 후 빠른 검증용. 평가 시나리오 검증은 위의 docker compose 모드 사용.
+> bootRun 모드는 사이징 측정에는 부적합. 코드 변경 후 빠른 검증용.
 
 상세 절차 / 환경변수 / 트러블슈팅: [`load-test/README.md`](load-test/README.md)
 
 ---
 
-## 문서 구조
+## 핵심 결정 요약
 
-### 아키텍처 (`docs/architecture/`)
-- [01. 개요](docs/architecture/01.Overview.md) — 시스템 다이어그램 + 데이터 흐름 + 5축 매핑 (5분)
-- [02. 도메인 모델](docs/architecture/02.Domain-Model.md) — Aggregate / VO / 상태 전이 / ERD
-- [03. 시퀀스 다이어그램](docs/architecture/03.Sequence-Diagrams.md) — 발급 / 보상 / SOLD_OUT / redeem race
-- [04. 데이터 저장소](docs/architecture/04.Data-Stores.md) — MySQL schema / Redis 키 / Kafka 토픽
-- [05. 모듈 구조](docs/architecture/05.Modules.md) — Gradle 멀티 모듈 / 패키지 레이어
+전체 ADR 은 [`CLAUDE.md` §6](./CLAUDE.md) 와 [`docs/decisions/`](docs/decisions/) 참조.
 
-### 결정 (`docs/decisions/`)
-- [00. ADR 인덱스](docs/decisions/README.md) — CLAUDE.md ADR 7개 + 추가 결정 6개
-- [Outbox 전략 (MySQL vs Redis Streams)](docs/decisions/outbox-mysql-vs-redis-streams.md)
-- [Server B idempotency cache user-scoped](docs/decisions/server-b-user-scoped-idempotency-cache.md)
-- [Outbox poller + Kafka producer](docs/decisions/server-b-outbox-poller-kafka.md)
-- [Server A 튜닝 — 측정 후 결정](docs/decisions/server-a-tuning-load-test-driven.md)
-- [Redeem 멱등 — 별도 캐시 미도입](docs/decisions/redeem-idempotency-without-cache.md)
-- [Scope — 의도적으로 안 한 것](docs/decisions/scope-decisions.md)
-
-### 운영 / 장애 (`docs/runbooks/`)
-- [장애 시나리오](docs/runbooks/failure-modes.md) — 각 단계에서 죽으면 어떻게 되는가
-
-통합 e2e 검증 절차 (12 시나리오) 는 [`load-test/README.md`](load-test/README.md) 가 단일 진실. runbook 으로 분리하지 않음 (한 곳에서 관리).
-
-### 보고서 (`docs/reports/`)
-- [01. 부하 테스트 결과 (Day 4)](docs/reports/01.load-test-results.md) — 4 시나리오 측정 + Phase C 결정 + Day 5 입력
-- 100,000명 사이징 계산 (Day 5 작성 예정)
-
-### 분석 / 기획
-- [요구사항 분석](docs/analysis/requirements-analysis.md)
-- [PRD](docs/prd/promotion-prd.md)
-
-### 요구사항 해석 / 문의 (`docs/clarifications/`)
-- [채용팀 문의 사항 + 답변 추적](docs/clarifications/recruiting-team-questions.md) — 트래픽 시나리오 / 100,000명 정의 / 계산 근거 형태 3가지 + 답변 도착 시 갱신
-
-### 학습 / Review 가이드 (`docs/walkthrough/`)
-- [설계 결정 + 트레이드오프 — 코드 따라가기 투어](docs/walkthrough/01.design-decisions-tour.md) — 15 주요 결정 + 코드 위치 + 30분 follow-along 순서
-
-전체 5일 로드맵: [`CLAUDE.md` §12](./CLAUDE.md)
+| ADR | 결정 | 근거 |
+|---|---|---|
+| 001 | A→B 동기 호출, B 는 Redis 적재 + Kafka publish 후 즉시 "접수 완료" 응답 | 사용자 응답 latency 와 실제 발급 처리(C 의 비관적 락) 분리 |
+| 002 | Saga (choreography) + Outbox 는 C 에 위치 | orchestrator 부담 회피, choreography 가 1 vCPU 에 경량 |
+| 003 | 재고는 C MySQL `coupon_type_inventory` + `SELECT FOR UPDATE` | 발급은 비동기 처리 → 락 경합과 사용자 응답이 분리. consumer concurrency 를 1~2 로 두면 1 vCPU 에서도 안전 |
+| 004 | 멱등성은 `(user_id, coupon_type_id)` UNIQUE 만 (Idempotency-Key 헤더 미사용) | 1 인 1 장 제약 자체가 멱등성을 만족 |
+| 005 | A 의 사용자별 Rate Limit 미사용 | 1 인 1 장 UNIQUE 가 자연 차단. Backpressure 는 B → C consumer throttle 로 |
+| 006 | Database per Service (A=MySQL, B=Redis, C=MySQL, schema 분리) | 서비스 독립 배포, 결합도 감소 |
+| 007 | Redeem 은 `@Version` 낙관적 락 | 발급 대비 동시 redeem 은 드묾, 비관적 락은 오버헤드 |
+| 008 | B 의 Kafka publish 실패는 producer 재시도 + `@Scheduled` 10 초 보완 | UNIQUE 가 중복 publish 방어, B 에 RDBMS 추가 회피 |
+| 009 | B↔C 양방향 Kafka (`coupon-issue-request` / `coupon-issue-result`) | 사용자 폴링이 B Redis 만 보면 되도록 결과를 B 에 캐시 |
+| 010 | A 의 요청 로그는 per-request commit (batch insert 아님) | 응답이 즉시 "접수 완료" 라 짧음 → 별도 큐 불필요. 1 vCPU MySQL-A 처리량은 측정 후 결정 |
 
 ---
 
@@ -123,60 +185,63 @@ docker compose up -d mysql redis kafka                   # 인프라만
 | Server A | `:8080` | `/actuator/health` |
 | Server B | `:8081` | `/actuator/health` |
 | Server C | `:8082` | `/actuator/health` |
-| MySQL | `:3306` | schemas: `server_a`, `server_b`, `server_c` |
+| MySQL | `:3306` | schemas: `server_a`, `server_c` |
 | Redis | `:6379` | — |
 | Kafka | `:9092` (INTERNAL) / `:29092` (HOST) | — |
 | Kafka UI | `http://localhost:8085` | — |
-| Prometheus | `http://localhost:9090` (각 서비스 `/actuator/prometheus` scrape) | — |
-| Grafana | `http://localhost:3000` (admin/admin, "Promotion Overview" 자동 로드) | — |
+| Prometheus | `http://localhost:9090` | — |
+| Grafana | `http://localhost:3000` (admin/admin) | — |
 
 ---
 
-## 진행 상황
+## 검증
 
-### Day 1 — Server A 단독 동작 (완료)
+### 단위 테스트 (mock 기반 — 빠른 비즈니스 로직 / 도메인 invariant)
 
-| PR | 내용 | 상태 |
+| 테스트 | 검증 대상 |
+|---|---|
+| `IssueRequestServiceTest` | Server A 진입 흐름 — ACCEPTED/DUPLICATE/INTERNAL_ERROR 매핑 + 200 동시 트래픽 일관성 (mock) |
+| `CouponIssueAcceptServiceTest` | Server B 접수 — 중복 차단 + Kafka publish 실패 시 pending 보존 (mock) |
+| `PendingIssueSchedulerTest` | Server B `@Scheduled` 보완 — 4 분기 동작 (mock) |
+| `CouponIssueProcessorTest` | Server C 비관적 락 경로 호출 + 1 트랜잭션 흐름 + UNIQUE race 흡수 (mock) |
+| `RedeemCouponServiceTest` | Redeem 정책 — 멱등 replay / ownership masking / SOLD_OUT 차단 |
+| `CouponTypeInventoryJpaEntityTest` | 재고 차감 invariant |
+| `UserCouponJpaEntityTest` | Redeem 도메인 invariant (status 전이 / usedAt) |
+| `IssueRequestTest` | Server A audit 도메인 |
+| `RedisKeysTest` | Redis 키 컨벤션 |
+
+### 통합 테스트 (실제 인프라 — mock 으론 검증 불가능한 영역)
+
+| 테스트 | 인프라 | 검증 대상 |
 |---|---|---|
-| #1 | Gradle 멀티모듈 + docker-compose | merged |
-| #2 | 도메인 모델 + Flyway | merged |
-| #3 | README 골격 + Mermaid | merged |
-| #4 | docs/architecture/ 분리 | merged |
-| #5 | Server A 발급 API + Stub 클라이언트 | merged |
-| #6 | Idempotency + Rate Limit Filter | merged |
-| #7 | RestClient + Circuit Breaker (+ k6 Phase 9) | merged |
+| `CouponIssueProcessorConcurrencyIT` | MySQL 8.0 (Testcontainers) | **비관적 락 정합성** — 재고 100 / 동시 200 요청 → 정확히 100 SUCCESS + 100 SOLD_OUT + `available_count=0` / 같은 user 5 동시 → 1 건만 발급 |
+| `IssueRequestServiceIT` | MySQL 8.0 (Testcontainers) + WireMock(B) | **per-request commit** 200 동시 → 200 row / **CB OPEN 전이** 5xx 10회 후 state=OPEN / **read-timeout** fallback + REJECTED commit |
+| `CouponIssueAcceptServiceIT` | Redis 7 (Testcontainers) + EmbeddedKafka | **Redis HSETNX atomic** 동시 10 호출 → 1 건만 ACCEPTED + Kafka 1 메시지 / Kafka 토픽 round-trip |
+| `CouponIssueResultConsumerIT` | Redis 7 (Testcontainers) + EmbeddedKafka | **C→B Kafka round-trip** — result publish → listener → Redis hash 갱신 + zset 제거 |
+| `PendingIssueSchedulerIT` | Redis 7 (Testcontainers) + WireMock(C) | **`@Scheduled` 시간축 동작** — C=200 → SUCCESS / C=404 → FAILED / C=5xx → PENDING 유지 (다음 cycle 재시도) |
 
-### Day 2 — Server B (재고 + Outbox + A↔B 통합) (완료)
+```bash
+./gradlew test
+```
 
-| PR | 내용 | 상태 |
-|---|---|---|
-| #8  | Server B 부트스트랩 + Outbox 인프라 | merged |
-| #9  | docs(decisions): Outbox 전략 결정 근거 | merged |
-| #10 | Redis Lua atomic 발급 + 보상 트랜잭션 + 동시성 IT | merged |
-| #11 | A↔B 실통합 (`base-url` 정정) + Stub SOLD_OUT hook + k6 day2 4 시나리오 | merged |
-| #12 | Server B idempotency 캐시/Outbox UNIQUE user-scoped (ADR-004 정합) | merged |
-| #13 | Server A 핵심 로직 단위 테스트 보강 (44 cases) | merged |
+> 통합 테스트는 모두 **`docker daemon` 필요**. Testcontainers 가 ad-hoc 으로 MySQL/Redis 컨테이너를 부팅하고, Spring Boot context 위에 EmbeddedKafka / WireMock 을 결합해 단위 테스트로는 닿을 수 없는 영역(InnoDB row lock 정합성, Redis HSETNX atomicity, Resilience4j 상태 전이, Kafka round-trip, `@Scheduled` 시간축) 을 측정합니다.
 
-### Day 3 — Server C + Outbox/Saga + e2e (완료)
+### k6 부하 시나리오
+- `load-test/scenarios/issue-1k-tps.js` — 인스턴스당 1,000 TPS 발급 부하 (p95 < 200 ms / p99 < 400 ms / 5xx < 0.5%)
 
-| PR | 내용 | 상태 |
-|---|---|---|
-| #14 | Server B Outbox poller + Kafka producer | merged |
-| #15 | docs(decisions): Server A batch insert / 백프레셔는 Day 4 부하 측정 후 결정 | merged |
-| #16 | Server C Kafka consumer + UNIQUE 멱등성 (V2 user-scoped 정합) | merged |
-| #17 | Server C Redeem API + 낙관적 락 (ADR-007) | merged |
-| #18 | e2e k6 day3 시나리오 + run-integrated.sh 확장 | merged |
-| #19 | docs: 평가자 가이드 + 시퀀스 + 장애 시나리오 + ADR 보강 + 컨테이너 자원 제약 (1 vCPU / 2 GB) | in progress |
+```bash
+./load-test/run-integrated.sh
+```
 
-### Day 4 — 관측성 + 부하 측정 (Phase A / B / C 완료)
+### 관측성
+- Prometheus + Grafana 대시보드 (JVM heap / CPU / HTTP p95 / HikariCP active / Kafka consumer lag)
 
-| PR | Phase | 내용 | 상태 |
-|---|---|---|---|
-| #20 | A | Prometheus + Grafana 인프라 + 5 패널 대시보드 | merged |
-| #21 | B | 4 k6 시나리오 + 측정 보고서 + Phase C GO 결정 | merged |
-| #22 | C | batch insert + 가상 스레드 + Bulkhead + HikariCP 50 — 재측정으로 효과 입증 (p95 -80%, pending -99.5%) | in progress |
+---
 
-### Day 5 — 100,000명 사이징 (예정)
+## 문서 구조
 
-- Phase C 후 재측정 → Little's Law 기반 인스턴스 수 산출
-- Redis / MySQL / Kafka 사이징
+- [`CLAUDE.md`](./CLAUDE.md) — 프로젝트 컨텍스트 + ADR 본문
+- [`docs/rivkode_system_design.md`](docs/rivkode_system_design.md) — 신규 설계 출처 (source of truth)
+- [`docs/architecture/`](docs/architecture/) — 아키텍처 개요 / 데이터 흐름 / Kafka 토픽
+- [`docs/decisions/README.md`](docs/decisions/README.md) — ADR 인덱스 (본문은 CLAUDE.md)
+- [`load-test/`](load-test/) — k6 시나리오 + 실행 스크립트
