@@ -9,27 +9,22 @@ dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-actuator")
 	implementation("org.springframework.boot:spring-boot-starter-validation")
 	implementation("org.springframework.boot:spring-boot-starter-data-jpa")
-	implementation("org.springframework.boot:spring-boot-starter-data-redis")
-	// Lettuce 풀링(`spring.data.redis.lettuce.pool.*`) 활성화에 필요. PR #5 (Idempotency / Rate Limit) 의 Redis 호출량 증가에 대비.
-	implementation("org.apache.commons:commons-pool2")
 
 	runtimeOnly("com.mysql:mysql-connector-j")
 	implementation("org.flywaydb:flyway-core")
 	implementation("org.flywaydb:flyway-mysql")
 
-	implementation("com.bucket4j:bucket4j_jdk17-core:8.14.0")
-	implementation("com.bucket4j:bucket4j_jdk17-redis-common:8.14.0")
-	implementation("com.bucket4j:bucket4j_jdk17-lettuce:8.14.0")
-
+	// ADR-001: A→B sync HTTP 호출 보호 (Circuit Breaker).
 	implementation("io.github.resilience4j:resilience4j-spring-boot3:2.3.0")
 	implementation("io.github.resilience4j:resilience4j-circuitbreaker:2.3.0")
-	implementation("io.github.resilience4j:resilience4j-timelimiter:2.3.0")
-	implementation("io.github.resilience4j:resilience4j-reactor:2.3.0")
-	// Phase C — admission control (Bulkhead semaphore). 시스템 capacity 초과 트래픽을 즉시 503 으로 흡수.
-	// CLAUDE.md ADR-005 ("A의 큐가 가득 차면 503") 의 system-wide admission control.
-	implementation("io.github.resilience4j:resilience4j-bulkhead:2.3.0")
 
 	implementation("io.micrometer:micrometer-registry-prometheus")
+
+	// Server A 통합 테스트 — 실제 MySQL 위에서 per-request commit + Circuit Breaker 동작 검증.
+	testImplementation(platform("org.testcontainers:testcontainers-bom:1.20.4"))
+	testImplementation("org.testcontainers:junit-jupiter")
+	testImplementation("org.testcontainers:mysql")
+	testImplementation("org.wiremock:wiremock-standalone:3.10.0")
 }
 
 tasks.named<Jar>("jar") {

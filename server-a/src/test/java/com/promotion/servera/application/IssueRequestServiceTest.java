@@ -1,188 +1,124 @@
 package com.promotion.servera.application;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import com.promotion.common.coupon.IssueAcceptanceResult;
+import com.promotion.common.coupon.IssueAcceptanceStatus;
+import com.promotion.servera.domain.IssueRequest;
+import com.promotion.servera.domain.IssueRequestRepository;
+import com.promotion.servera.domain.IssueRequestStatus;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.promotion.common.coupon.CouponCode;
-import com.promotion.common.coupon.IssueResult;
-import com.promotion.common.coupon.IssueStatus;
-import com.promotion.servera.domain.Event;
-import com.promotion.servera.domain.EventRepository;
-import com.promotion.servera.domain.IssueRequest;
-import com.promotion.servera.domain.IssueRequestRepository;
-import com.promotion.servera.domain.IssueRequestStatus;
-import com.promotion.servera.infrastructure.batch.IssueRequestBatchQueue;
-import java.time.Instant;
-import java.util.Optional;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-import org.springframework.transaction.support.TransactionCallback;
-import org.springframework.transaction.support.TransactionTemplate;
-
 /**
- * Phase C 의 IssueRequestService 동작:
- * <ul>
- *   <li>정상: client 호출 → in-memory 마감 → batchQueue.tryEnqueue 1회. DB save 없음.</li>
- *   <li>큐 가득 (방어선 2): tryEnqueue=false → 동기 INSERT fallback (repository.save 1회).</li>
- *   <li>event 검증은 batch 큐 진입 전 — 미존재 / 종료 시 throw.</li>
- * </ul>
+ * Server A 진입 흐름의 핵심 비즈니스 로직 테스트.
+ *
+ * <p>요구사항: 인스턴스당 1000 TPS 동시 트래픽이 들어와도 — 모든 요청에 대해 (1) B 호출 + (2) per-request
+ * commit 이 일관되게 수행되어야 한다. 단위 테스트에서는 mock 으로 호출 횟수와 일관성만 검증
+ * (실제 TPS 측정은 k6 부하 시나리오 `issue-1k-tps.js`).
  */
+@ExtendWith(MockitoExtension.class)
 class IssueRequestServiceTest {
 
-    private static final Instant FAR_PAST = Instant.parse("2020-01-01T00:00:00Z");
-    private static final Instant FAR_FUTURE = Instant.parse("2099-01-01T00:00:00Z");
-    private static final CouponCode CODE = new CouponCode("ABCD12345678");
+    @Mock
+    private IssueRequestRepository repository;
 
-    private IssueRequestRepository issueRequestRepository;
-    private EventRepository eventRepository;
+    @Mock
     private CouponIssuingClient client;
-    private TransactionTemplate transactionTemplate;
-    private IssueRequestBatchQueue batchQueue;
+
+    @InjectMocks
     private IssueRequestService service;
 
-    @BeforeEach
-    void setUp() {
-        issueRequestRepository = mock(IssueRequestRepository.class);
-        eventRepository = mock(EventRepository.class);
-        client = mock(CouponIssuingClient.class);
-        transactionTemplate = mock(TransactionTemplate.class);
-        batchQueue = mock(IssueRequestBatchQueue.class);
+    @Test
+    void mapsAcceptedToAcceptedStatus() {
+        when(client.issue(anyLong(), anyLong(), anyLong()))
+                .thenReturn(IssueAcceptanceResult.accepted("req-1"));
+        when(repository.save(any())).thenAnswer(i -> i.getArgument(0));
 
-        // 큐 enqueue 기본 성공 — 일반 정상 흐름.
-        when(batchQueue.tryEnqueue(any(IssueRequest.class))).thenReturn(true);
+        IssueOutcome outcome = service.issue(new IssueCommand(1L, 100L, 10L));
 
-        // TransactionTemplate.execute 가 callback 그대로 실행 — fallback save 시뮬레이션.
-        when(transactionTemplate.execute(any())).thenAnswer(inv -> {
-            TransactionCallback<?> cb = inv.getArgument(0);
-            return cb.doInTransaction(null);
+        assertEquals(IssueAcceptanceStatus.ACCEPTED, outcome.downstreamStatus());
+        assertEquals(IssueRequestStatus.ACCEPTED, outcome.issueRequest().getStatus());
+        verify(repository).save(any());
+    }
+
+    @Test
+    void mapsDuplicateToDuplicateStatus() {
+        when(client.issue(anyLong(), anyLong(), anyLong()))
+                .thenReturn(IssueAcceptanceResult.duplicate("req-2"));
+        when(repository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        IssueOutcome outcome = service.issue(new IssueCommand(1L, 100L, 10L));
+
+        assertEquals(IssueAcceptanceStatus.DUPLICATE, outcome.downstreamStatus());
+        assertEquals(IssueRequestStatus.DUPLICATE, outcome.issueRequest().getStatus());
+    }
+
+    @Test
+    void mapsInternalErrorToRejectedStatus() {
+        when(client.issue(anyLong(), anyLong(), anyLong()))
+                .thenReturn(IssueAcceptanceResult.internalError("circuit-open"));
+        when(repository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        IssueOutcome outcome = service.issue(new IssueCommand(1L, 100L, 10L));
+
+        assertEquals(IssueAcceptanceStatus.INTERNAL_ERROR, outcome.downstreamStatus());
+        assertTrue(outcome.isDownstreamUnavailable());
+        assertEquals(IssueRequestStatus.REJECTED, outcome.issueRequest().getStatus());
+    }
+
+    /**
+     * 동시 트래픽 스모크 — 200 동시 요청에 대해 client / repository 가 모두 호출되는지.
+     * 실제 1000 TPS 측정은 k6, 단위 테스트는 일관성 invariant 만 검증.
+     */
+    @Test
+    void allConcurrentRequestsReachClientAndRepository() throws Exception {
+        int concurrency = 200;
+        when(client.issue(anyLong(), anyLong(), anyLong()))
+                .thenReturn(IssueAcceptanceResult.accepted("req-x"));
+        when(repository.save(any())).thenAnswer(i -> {
+            IssueRequest r = i.getArgument(0);
+            return r;
         });
 
-        // IssueRequestRepository.save 는 인자 그대로 반환 (실제 DB 없음).
-        when(issueRequestRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        ExecutorService pool = Executors.newFixedThreadPool(50);
+        CountDownLatch start = new CountDownLatch(1);
+        AtomicInteger ok = new AtomicInteger();
 
-        // 정상 event — 항상 open.
-        when(eventRepository.findById(anyLong())).thenReturn(Optional.of(
-            Event.reconstitute(1L, "Concert", 10_000, FAR_PAST, FAR_FUTURE)));
+        for (int i = 0; i < concurrency; i++) {
+            final long uid = i + 1;
+            pool.submit(() -> {
+                try {
+                    start.await();
+                    service.issue(new IssueCommand(uid, 1L, 1L));
+                    ok.incrementAndGet();
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+        }
+        start.countDown();
+        pool.shutdown();
+        boolean done = pool.awaitTermination(15, TimeUnit.SECONDS);
+        assertTrue(done, "executor did not finish in time");
 
-        service = new IssueRequestService(
-            issueRequestRepository, eventRepository, client, transactionTemplate, batchQueue);
-    }
-
-    @Test
-    @DisplayName("정상 흐름 — FORWARDED → SUCCEEDED, batchQueue enqueue 1회, DB save 없음")
-    void issued_path_marks_succeeded_and_enqueues_to_batch() {
-        when(client.issue(anyLong(), anyLong(), anyString())).thenReturn(IssueResult.issued(CODE));
-
-        IssueOutcome outcome = service.issue(new IssueCommand(1L, 100L, "idem-1"));
-
-        assertThat(outcome.downstreamStatus()).isEqualTo(IssueStatus.ISSUED);
-        IssueRequest req = outcome.issueRequest();
-        assertThat(req.getStatus()).isEqualTo(IssueRequestStatus.SUCCEEDED);
-        assertThat(req.getCouponCode()).isEqualTo(CODE);
-        assertThat(req.getFailureReason()).isNull();
-        // Phase C — 큐에 1회만 enqueue. DB save 는 없음.
-        verify(batchQueue, times(1)).tryEnqueue(any(IssueRequest.class));
-        verify(issueRequestRepository, never()).save(any());
-        verify(client, times(1)).issue(eq(1L), eq(100L), eq("idem-1"));
-    }
-
-    @Test
-    @DisplayName("SOLD_OUT — markFailed + batchQueue enqueue 1회")
-    void sold_out_marks_failed_and_enqueues() {
-        when(client.issue(anyLong(), anyLong(), anyString())).thenReturn(IssueResult.soldOut());
-
-        IssueOutcome outcome = service.issue(new IssueCommand(1L, 100L, "idem"));
-
-        assertThat(outcome.downstreamStatus()).isEqualTo(IssueStatus.SOLD_OUT);
-        assertThat(outcome.issueRequest().getStatus()).isEqualTo(IssueRequestStatus.FAILED);
-        assertThat(outcome.issueRequest().getFailureReason()).isEqualTo("stock exhausted");
-        assertThat(outcome.isDownstreamUnavailable()).isFalse();
-        verify(batchQueue, times(1)).tryEnqueue(any(IssueRequest.class));
-        verify(issueRequestRepository, never()).save(any());
-    }
-
-    @Test
-    @DisplayName("INTERNAL_ERROR (Circuit OPEN / 5xx) — markFailed + downstreamStatus INTERNAL_ERROR")
-    void internal_error_marks_failed_and_signals_downstream_unavailable() {
-        when(client.issue(anyLong(), anyLong(), anyString()))
-            .thenReturn(IssueResult.internalError("circuit-open"));
-
-        IssueOutcome outcome = service.issue(new IssueCommand(1L, 100L, "idem"));
-
-        assertThat(outcome.downstreamStatus()).isEqualTo(IssueStatus.INTERNAL_ERROR);
-        assertThat(outcome.isDownstreamUnavailable()).isTrue();
-        assertThat(outcome.issueRequest().getStatus()).isEqualTo(IssueRequestStatus.FAILED);
-        assertThat(outcome.issueRequest().getFailureReason()).isEqualTo("circuit-open");
-        verify(batchQueue, times(1)).tryEnqueue(any(IssueRequest.class));
-    }
-
-    @Test
-    @DisplayName("client.issue 의 RuntimeException → INTERNAL_ERROR fallback")
-    void client_runtime_exception_is_caught_and_mapped_to_internal_error() {
-        when(client.issue(anyLong(), anyLong(), anyString()))
-            .thenThrow(new RuntimeException("simulated stub blowup"));
-
-        IssueOutcome outcome = service.issue(new IssueCommand(1L, 100L, "idem"));
-
-        assertThat(outcome.downstreamStatus()).isEqualTo(IssueStatus.INTERNAL_ERROR);
-        assertThat(outcome.issueRequest().getStatus()).isEqualTo(IssueRequestStatus.FAILED);
-        // prefix 만 검증 — RuntimeException 의 simple class name 변경 시 테스트 깨짐 회피.
-        assertThat(outcome.issueRequest().getFailureReason()).startsWith("client-exception:");
-        verify(batchQueue, times(1)).tryEnqueue(any(IssueRequest.class));
-    }
-
-    @Test
-    @DisplayName("방어선 2 — 큐 가득 차면 동기 INSERT fallback (repository.save 1회)")
-    void queue_full_falls_back_to_sync_insert() {
-        when(client.issue(anyLong(), anyLong(), anyString())).thenReturn(IssueResult.issued(CODE));
-        when(batchQueue.tryEnqueue(any(IssueRequest.class))).thenReturn(false); // 큐 가득 시뮬레이션
-
-        IssueOutcome outcome = service.issue(new IssueCommand(1L, 100L, "idem"));
-
-        assertThat(outcome.issueRequest().getStatus()).isEqualTo(IssueRequestStatus.SUCCEEDED);
-        // tryEnqueue 시도 1회 + 동기 fallback save 1회.
-        verify(batchQueue, times(1)).tryEnqueue(any(IssueRequest.class));
-        verify(issueRequestRepository, times(1)).save(any(IssueRequest.class));
-        verify(transactionTemplate, times(1)).execute(any());
-    }
-
-    @Test
-    @DisplayName("event 미존재 → IllegalArgumentException, client/큐/save 모두 미호출")
-    void missing_event_throws_before_any_side_effect() {
-        when(eventRepository.findById(anyLong())).thenReturn(Optional.empty());
-
-        assertThatThrownBy(() -> service.issue(new IssueCommand(1L, 999L, "idem")))
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("event not found");
-
-        verify(batchQueue, never()).tryEnqueue(any());
-        verify(transactionTemplate, never()).execute(any());
-        verify(issueRequestRepository, never()).save(any());
-        verify(client, never()).issue(anyLong(), anyLong(), anyString());
-    }
-
-    @Test
-    @DisplayName("event 종료 시각 이후 → IllegalStateException, 큐 미호출")
-    void event_not_open_throws() {
-        Instant past = Instant.parse("2020-06-01T00:00:00Z");
-        when(eventRepository.findById(anyLong())).thenReturn(Optional.of(
-            Event.reconstitute(1L, "ended", 10, FAR_PAST, past)));
-
-        assertThatThrownBy(() -> service.issue(new IssueCommand(1L, 100L, "idem")))
-            .isInstanceOf(IllegalStateException.class)
-            .hasMessageContaining("not open");
-
-        verify(client, never()).issue(anyLong(), anyLong(), anyString());
-        verify(batchQueue, never()).tryEnqueue(any());
+        assertEquals(concurrency, ok.get());
+        verify(client, times(concurrency)).issue(anyLong(), anyLong(), anyLong());
+        verify(repository, times(concurrency)).save(any());
     }
 }
