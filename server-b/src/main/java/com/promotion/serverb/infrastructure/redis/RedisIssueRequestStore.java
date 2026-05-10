@@ -25,6 +25,10 @@ public class RedisIssueRequestStore {
     private static final String F_STATUS = "status";
     private static final String F_CREATED_AT = "createdAt";
     private static final String F_CODE = "code";
+    // ADR-008 재발행 cap 추적. accept 시 1 로 시작, 스케줄러가 HINCRBY 로 증가. lastPublishedAt 은 ZSET score 와
+    // 함께 갱신되어 다음 cycle 의 grace 부여.
+    private static final String F_PUBLISH_ATTEMPTS = "publishAttempts";
+    private static final String F_LAST_PUBLISHED_AT = "lastPublishedAt";
 
     private final StringRedisTemplate redis;
     private final Duration ttl;
@@ -52,7 +56,9 @@ public class RedisIssueRequestStore {
                 F_EVENT_ID, Long.toString(eventId),
                 F_COUPON_TYPE_ID, Long.toString(couponTypeId),
                 F_STATUS, IssuePendingStatus.PENDING.name(),
-                F_CREATED_AT, Long.toString(createdAt.toEpochMilli())
+                F_CREATED_AT, Long.toString(createdAt.toEpochMilli()),
+                F_PUBLISH_ATTEMPTS, "1",
+                F_LAST_PUBLISHED_AT, Long.toString(createdAt.toEpochMilli())
         );
         redis.opsForHash().putAll(hashKey, fields);
         redis.expire(hashKey, ttl);
@@ -60,6 +66,22 @@ public class RedisIssueRequestStore {
                 RedisKeys.pendingZsetMember(userId, couponTypeId),
                 createdAt.toEpochMilli());
         return true;
+    }
+
+    /**
+     * ADR-008 스케줄러 재발행 기록. attempts 를 HINCRBY 로 증가, lastPublishedAt 을 hash + zset score 양쪽에
+     * 동기 갱신해 다음 cycle 까지 cutoff 만큼의 grace 가 자연스럽게 부여된다. PENDING 상태는 유지 (scheduler 가
+     * 다음 cycle 에 다시 잡아갈 수 있어야 함).
+     */
+    public int recordRepublish(long userId, long couponTypeId, Instant publishedAt) {
+        String hashKey = RedisKeys.pendingHash(userId, couponTypeId);
+        Long updatedAttempts = redis.opsForHash().increment(hashKey, F_PUBLISH_ATTEMPTS, 1L);
+        redis.opsForHash().put(hashKey, F_LAST_PUBLISHED_AT, Long.toString(publishedAt.toEpochMilli()));
+        redis.expire(hashKey, ttl);
+        redis.opsForZSet().add(RedisKeys.PENDING_ZSET,
+                RedisKeys.pendingZsetMember(userId, couponTypeId),
+                publishedAt.toEpochMilli());
+        return updatedAttempts == null ? 0 : updatedAttempts.intValue();
     }
 
     /** Kafka result consumer 또는 스케줄러가 결과를 반영. */
@@ -109,13 +131,17 @@ public class RedisIssueRequestStore {
             if (requestId == null || eventIdStr == null || statusStr == null || createdAtStr == null) {
                 continue;
             }
+            // 배포 직후 in-flight 항목은 publishAttempts 필드가 없을 수 있음 → 1 로 해석 (UNIQUE 가 안전성 보장).
+            String attemptsStr = (String) entries.get(F_PUBLISH_ATTEMPTS);
+            int attempts = attemptsStr == null ? 1 : Integer.parseInt(attemptsStr);
             result.add(new PendingIssue(
                     requestId,
                     userId,
                     Long.parseLong(eventIdStr),
                     couponTypeId,
                     IssuePendingStatus.valueOf(statusStr),
-                    Instant.ofEpochMilli(Long.parseLong(createdAtStr))
+                    Instant.ofEpochMilli(Long.parseLong(createdAtStr)),
+                    attempts
             ));
         }
         return result;

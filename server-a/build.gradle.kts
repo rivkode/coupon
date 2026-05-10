@@ -9,6 +9,9 @@ dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-actuator")
 	implementation("org.springframework.boot:spring-boot-starter-validation")
 	implementation("org.springframework.boot:spring-boot-starter-data-jpa")
+	// ADR-011: A 진입부에서 SOLD_OUT negative cache 단락 — B 까지 가지 않고 즉시 종결.
+	implementation("org.springframework.boot:spring-boot-starter-data-redis")
+	implementation("org.apache.commons:commons-pool2")
 
 	runtimeOnly("com.mysql:mysql-connector-j")
 	implementation("org.flywaydb:flyway-core")

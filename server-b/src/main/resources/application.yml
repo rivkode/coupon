@@ -88,11 +88,15 @@ app:
       partitions: ${KAFKA_TOPIC_PARTITIONS:3}
       replication-factor: ${KAFKA_TOPIC_RF:1}
     send-timeout-ms: ${KAFKA_SEND_TIMEOUT_MS:3000}
+    # ADR-008 스케줄러 재발행용 별도 timeout — 기본 3s 가 fixed-delay 1s 와 batch 50 과 결합되면 cycle 폭주.
+    scheduler-send-timeout-ms: ${KAFKA_SCHEDULER_SEND_TIMEOUT_MS:500}
   scheduler:
-    # ADR-008: 10 초 이상 pending 인 신청을 C 로 직접 조회 → 결과 반영.
+    # ADR-008: 10 초 이상 pending → C 조회 → (없으면) Kafka 재발행 → cap 초과시 FAILED.
     pending-cutoff-seconds: ${SCHEDULER_PENDING_CUTOFF_SECONDS:10}
     fixed-delay-ms: ${SCHEDULER_FIXED_DELAY_MS:1000}
     batch-size: ${SCHEDULER_BATCH_SIZE:50}
+    # 최초 accept 시 1, 스케줄러 재발행마다 +1. cutoff(10s) × max(3) = 30s 안에 결론.
+    max-publish-attempts: ${SCHEDULER_MAX_PUBLISH_ATTEMPTS:3}
   server-c:
     # 스케줄러가 C 의 internal GET 을 호출할 때 사용.
     base-url: ${SERVER_C_URL:http://localhost:8082}

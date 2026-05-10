@@ -14,7 +14,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.time.Instant;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -31,9 +30,11 @@ import static org.mockito.Mockito.when;
  * <ul>
  *   <li>(user, couponType) 중복 신청 → DUPLICATE 응답, Kafka publish 안 함</li>
  *   <li>최초 신청 → ACCEPTED 응답, Kafka publish 호출</li>
- *   <li>Redis 적재 후 Kafka publish 실패 → 예외 전파, 단 Redis 의 pending 은 적재된 상태로 남아
- *       스케줄러(@Scheduled) 가 보완 가능 (ADR-008)</li>
+ *   <li>Redis 적재 후 Kafka publish 실패 → ACCEPTED 응답 (ADR-008 — publish 실패는 swallow,
+ *       스케줄러가 30s 안에 재발행으로 회복). Redis pending 은 attempts=1 로 남아있음.</li>
  * </ul>
+ *
+ * <p>SOLD_OUT 단락은 server-a 진입에서 처리 (ADR-011) — B 는 정상 흐름만.
  */
 @ExtendWith(MockitoExtension.class)
 class CouponIssueAcceptServiceTest {
@@ -70,20 +71,19 @@ class CouponIssueAcceptServiceTest {
     }
 
     /**
-     * 핵심 시나리오 (사용자 요구사항): Redis 에는 적재됐는데 Kafka publish 가 실패한 경우 —
-     * IllegalStateException 이 propagate 되어 사용자에게 5xx 가 가지만, Redis 의 pending 은
-     * 그대로 남아 PendingIssueScheduler 가 10 초 후 C DB 직접 조회로 보완할 수 있는 상태.
+     * H1 결정 (ADR-008): publish 실패는 swallow → ACCEPTED 응답 반환. 스케줄러가 cap(=3) 안에서
+     * 재발행으로 회복하므로 사용자에게 5xx + 재시도 시 DUPLICATE 의 모호한 흐름을 만들지 않음.
      */
     @Test
-    void leavesRedisPendingWhenKafkaPublishFails() {
+    void returnsAcceptedEvenWhenKafkaPublishFails() {
         when(store.savePendingIfAbsent(anyString(), anyLong(), anyLong(), anyLong(), any(Instant.class)))
                 .thenReturn(true);
         doThrow(new IllegalStateException("kafka send failed"))
                 .when(publisher).publish(any());
 
-        assertThrows(IllegalStateException.class, () -> service.accept(1L, 100L, 10L));
+        IssueAcceptanceResult result = service.accept(1L, 100L, 10L);
 
-        // Redis 의 savePendingIfAbsent 는 호출됐고 — pending 적재 완료, 스케줄러가 보완 가능한 상태.
+        assertEquals(IssueAcceptanceStatus.ACCEPTED, result.status());
         verify(store).savePendingIfAbsent(anyString(), eq(1L), eq(100L), eq(10L), any(Instant.class));
         verify(publisher).publish(any());
     }

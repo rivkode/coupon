@@ -10,9 +10,12 @@ USE server_c;
 DELETE FROM user_coupon;
 DELETE FROM outbox_event;
 
--- 마스터 데이터 (없으면 생성).
-INSERT IGNORE INTO event (event_id, name, content, started_at, ended_at)
-    VALUES (1, 'load-test', 'k6 integrated', NOW(3) - INTERVAL 1 HOUR, NOW(3) + INTERVAL 1 HOUR);
+-- 마스터 데이터 — 매 run 마다 시간 윈도우 재설정 (volume 이 살아있을 때 stale 방지).
+INSERT INTO event (event_id, name, content, started_at, ended_at)
+    VALUES (1, 'load-test', 'k6 integrated', NOW(3) - INTERVAL 1 HOUR, NOW(3) + INTERVAL 1 HOUR)
+    ON DUPLICATE KEY UPDATE
+        started_at = NOW(3) - INTERVAL 1 HOUR,
+        ended_at = NOW(3) + INTERVAL 1 HOUR;
 
 INSERT IGNORE INTO coupon_type (coupon_type_id, event_id, name, discount_rate)
     VALUES (1, 1, '10pct', 10);
