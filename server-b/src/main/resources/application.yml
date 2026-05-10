@@ -23,8 +23,11 @@ spring:
       operation-timeout: 5s
       fail-fast: false
     # ADR-008: idempotent producer + acks=all + retries.
+    # batch.size 32KB — throughput 향상 (default 16KB). linger.ms 5 유지 — 낮은 latency 우선.
+    # linger.ms 를 10 으로 올렸을 때 cold-start 부하 + sync publish 누적으로 CB trip 관측 → 5 유지.
     producer:
       acks: all
+      batch-size: 32768
       properties:
         enable.idempotence: true
         max.in.flight.requests.per.connection: 5
