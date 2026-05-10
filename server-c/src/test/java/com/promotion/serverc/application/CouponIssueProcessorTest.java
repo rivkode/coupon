@@ -11,15 +11,20 @@ import com.promotion.serverc.infrastructure.persistence.OutboxEventJpaEntity;
 import com.promotion.serverc.infrastructure.persistence.OutboxEventJpaRepository;
 import com.promotion.serverc.infrastructure.persistence.UserCouponJpaEntity;
 import com.promotion.serverc.infrastructure.persistence.UserCouponJpaRepository;
+import com.promotion.serverc.infrastructure.redis.CouponAvailabilityCache;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -32,14 +37,18 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
- * Kafka consumer 트랜잭션의 비즈니스 로직 (ADR-002 / ADR-003).
+ * Kafka consumer 트랜잭션의 비즈니스 로직 (ADR-002 / ADR-003 / ADR-011).
  *
  * <p>핵심 검증:
  * <ul>
  *   <li>비관적 락 경로(`findForUpdate`) 가 호출되는지 — 실제 락 동작은 MySQL 환경 부하로</li>
  *   <li>1 트랜잭션 내 (UNIQUE 단락 + event 유효성 + inventory 차감 + user_coupon + outbox) 흐름</li>
  *   <li>UNIQUE constraint race 시 멱등 (DataIntegrityViolation 흡수, outbox 발행 안 함)</li>
+ *   <li>ADR-011: afterCommit hook 으로 inventory fresh read → 0 이면 negative cache write</li>
  * </ul>
+ *
+ * <p>TransactionSynchronizationManager 는 Spring tx 컨텍스트가 필요해 init/clear 로 시뮬레이트.
+ * `fireAfterCommit()` 으로 등록된 hook 을 수동 트리거.
  */
 @ExtendWith(MockitoExtension.class)
 class CouponIssueProcessorTest {
@@ -56,13 +65,31 @@ class CouponIssueProcessorTest {
     @Mock
     private OutboxEventJpaRepository outboxRepository;
 
+    @Mock
+    private CouponAvailabilityCache availabilityCache;
+
     private CouponIssueProcessor processor;
 
     @BeforeEach
     void setUp() {
         ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
         processor = new CouponIssueProcessor(
-                userCouponRepository, inventoryRepository, eventRepository, outboxRepository, objectMapper);
+                userCouponRepository, inventoryRepository, eventRepository, outboxRepository,
+                objectMapper, availabilityCache);
+        TransactionSynchronizationManager.initSynchronization();
+    }
+
+    @AfterEach
+    void tearDown() {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.clear();
+        }
+    }
+
+    /** afterCommit hook 을 수동 트리거. */
+    private void fireAfterCommit() {
+        List<TransactionSynchronization> syncs = TransactionSynchronizationManager.getSynchronizations();
+        syncs.forEach(TransactionSynchronization::afterCommit);
     }
 
     @Test
@@ -109,7 +136,7 @@ class CouponIssueProcessorTest {
 
         processor.process(new CouponIssueRequestPayload("req-1", 1L, 100L, 10L, Instant.now()));
 
-        verifyNoInteractions(eventRepository, inventoryRepository, outboxRepository);
+        verifyNoInteractions(eventRepository, inventoryRepository, outboxRepository, availabilityCache);
         verify(userCouponRepository, never()).save(any());
     }
 
@@ -125,6 +152,7 @@ class CouponIssueProcessorTest {
         verify(inventoryRepository, never()).findForUpdate(anyLong(), anyLong());
         verify(userCouponRepository).save(argThat((UserCouponJpaEntity uc) ->
                 uc.getStatus() == UserCouponStatus.FAILED));
+        verifyNoInteractions(availabilityCache);
     }
 
     /**
@@ -146,5 +174,80 @@ class CouponIssueProcessorTest {
         processor.process(new CouponIssueRequestPayload("req-1", 1L, 100L, 10L, Instant.now()));
 
         verify(outboxRepository, never()).save(any());
+    }
+
+    /** ADR-011: SOLD_OUT 경로에서 afterCommit hook 이 fresh read → 재고 0 → cache write. */
+    @Test
+    void writesAvailabilityCacheOnSoldOutPath() {
+        when(userCouponRepository.existsByUserIdAndCouponTypeId(1L, 10L)).thenReturn(false);
+        EventJpaEntity event = new EventJpaEntity(
+                "concert", null, LocalDateTime.now().minusHours(1), LocalDateTime.now().plusHours(1));
+        when(eventRepository.findById(100L)).thenReturn(Optional.of(event));
+        CouponTypeInventoryJpaEntity inv = new CouponTypeInventoryJpaEntity(100L, 10L, 1);
+        inv.decrement(); // pre-empty
+        when(inventoryRepository.findForUpdate(100L, 10L)).thenReturn(Optional.of(inv));
+        // afterCommit fresh read 가 0 인 row 를 본다
+        when(inventoryRepository.findByEventIdAndCouponTypeId(100L, 10L)).thenReturn(Optional.of(inv));
+
+        processor.process(new CouponIssueRequestPayload("req-1", 1L, 100L, 10L, Instant.now()));
+        fireAfterCommit();
+
+        verify(availabilityCache).markSoldOut(100L, 10L);
+    }
+
+    /** ADR-011: SUCCESS + 마지막 1장 — afterCommit 가 0 을 발견 → cache write. */
+    @Test
+    void writesAvailabilityCacheWhenLastOneIssued() {
+        when(userCouponRepository.existsByUserIdAndCouponTypeId(1L, 10L)).thenReturn(false);
+        EventJpaEntity event = new EventJpaEntity(
+                "concert", null, LocalDateTime.now().minusHours(1), LocalDateTime.now().plusHours(1));
+        when(eventRepository.findById(100L)).thenReturn(Optional.of(event));
+        CouponTypeInventoryJpaEntity inv = new CouponTypeInventoryJpaEntity(100L, 10L, 1);
+        when(inventoryRepository.findForUpdate(100L, 10L)).thenReturn(Optional.of(inv));
+        when(inventoryRepository.findByEventIdAndCouponTypeId(100L, 10L)).thenReturn(Optional.of(inv));
+
+        processor.process(new CouponIssueRequestPayload("req-1", 1L, 100L, 10L, Instant.now()));
+        fireAfterCommit();
+
+        // 발급 자체는 SUCCESS, decrement 후 availableCount=0 → cache write
+        assertEquals(0, inv.getAvailableCount());
+        verify(availabilityCache).markSoldOut(100L, 10L);
+    }
+
+    /**
+     * ADR-011 ghost write 방지 — 트랜잭션이 rollback (Spring 표준 동작) 되면 afterCommit hook 자체가
+     * 발화되지 않으므로 cache write 도 일어나지 않는다. 본 테스트는 hook 미발화를 시뮬레이트.
+     */
+    @Test
+    void doesNotWriteCacheWhenTransactionRollsBack() {
+        when(userCouponRepository.existsByUserIdAndCouponTypeId(1L, 10L)).thenReturn(false);
+        EventJpaEntity event = new EventJpaEntity(
+                "concert", null, LocalDateTime.now().minusHours(1), LocalDateTime.now().plusHours(1));
+        when(eventRepository.findById(100L)).thenReturn(Optional.of(event));
+        CouponTypeInventoryJpaEntity inv = new CouponTypeInventoryJpaEntity(100L, 10L, 1);
+        when(inventoryRepository.findForUpdate(100L, 10L)).thenReturn(Optional.of(inv));
+
+        processor.process(new CouponIssueRequestPayload("req-1", 1L, 100L, 10L, Instant.now()));
+        // afterCommit 미호출 = 트랜잭션 롤백 시뮬레이트. 실 환경에선 Spring tx 매니저가 알아서 미발화.
+
+        verifyNoInteractions(availabilityCache);
+    }
+
+    /** SUCCESS + 잔여 있음 → afterCommit 가 0 이 아님 → cache write 안 함. */
+    @Test
+    void skipsCacheWhenInventoryRemaining() {
+        when(userCouponRepository.existsByUserIdAndCouponTypeId(1L, 10L)).thenReturn(false);
+        EventJpaEntity event = new EventJpaEntity(
+                "concert", null, LocalDateTime.now().minusHours(1), LocalDateTime.now().plusHours(1));
+        when(eventRepository.findById(100L)).thenReturn(Optional.of(event));
+        CouponTypeInventoryJpaEntity inv = new CouponTypeInventoryJpaEntity(100L, 10L, 5);
+        when(inventoryRepository.findForUpdate(100L, 10L)).thenReturn(Optional.of(inv));
+        when(inventoryRepository.findByEventIdAndCouponTypeId(100L, 10L)).thenReturn(Optional.of(inv));
+
+        processor.process(new CouponIssueRequestPayload("req-1", 1L, 100L, 10L, Instant.now()));
+        fireAfterCommit();
+
+        assertEquals(4, inv.getAvailableCount());
+        verify(availabilityCache, never()).markSoldOut(anyLong(), anyLong());
     }
 }

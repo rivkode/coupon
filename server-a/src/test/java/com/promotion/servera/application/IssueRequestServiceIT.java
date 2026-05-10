@@ -1,6 +1,7 @@
 package com.promotion.servera.application;
 
 import com.promotion.common.coupon.IssueAcceptanceStatus;
+import com.promotion.servera.infrastructure.redis.CouponAvailabilityCache;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import org.junit.jupiter.api.BeforeEach;
@@ -8,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -15,6 +17,9 @@ import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
+
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.when;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -74,10 +79,15 @@ class IssueRequestServiceIT {
     @Autowired
     CircuitBreakerRegistry circuitBreakerRegistry;
 
+    /** ADR-011: 본 IT 의 관심사는 Circuit Breaker / per-request commit — cache 는 항상 false 로 mock. */
+    @MockBean
+    CouponAvailabilityCache availabilityCache;
+
     @BeforeEach
     void resetState() {
         jdbc.update("DELETE FROM issue_request");
         wireMock.resetAll();
+        when(availabilityCache.isSoldOut(anyLong(), anyLong())).thenReturn(false);
         // CB sliding window / state 초기화 — 이전 테스트에서 OPEN 으로 끝난 상태가 다음 테스트에 누설되지 않도록.
         circuitBreakerRegistry.circuitBreaker("couponIssuing").reset();
     }

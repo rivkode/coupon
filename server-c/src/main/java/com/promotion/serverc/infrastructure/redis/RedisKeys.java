@@ -9,4 +9,12 @@ public final class RedisKeys {
     public static String event(long eventId) {
         return "event:" + eventId;
     }
+
+    /**
+     * coupon:available:{eventId}:{couponTypeId} — ADR-011 SOLD_OUT negative cache.
+     * 키 존재 = 매진. 부재 = 사용 가능 또는 미정 (B 가 fall-through). 값 자체는 사용하지 않음.
+     */
+    public static String couponAvailable(long eventId, long couponTypeId) {
+        return "coupon:available:" + eventId + ":" + couponTypeId;
+    }
 }

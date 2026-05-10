@@ -5,6 +5,7 @@ import com.promotion.common.coupon.IssueAcceptanceStatus;
 import com.promotion.servera.domain.IssueRequest;
 import com.promotion.servera.domain.IssueRequestRepository;
 import com.promotion.servera.domain.IssueRequestStatus;
+import com.promotion.servera.infrastructure.redis.CouponAvailabilityCache;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -21,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -41,11 +43,15 @@ class IssueRequestServiceTest {
     @Mock
     private CouponIssuingClient client;
 
+    @Mock
+    private CouponAvailabilityCache availabilityCache;
+
     @InjectMocks
     private IssueRequestService service;
 
     @Test
     void mapsAcceptedToAcceptedStatus() {
+        when(availabilityCache.isSoldOut(100L, 10L)).thenReturn(false);
         when(client.issue(anyLong(), anyLong(), anyLong()))
                 .thenReturn(IssueAcceptanceResult.accepted("req-1"));
         when(repository.save(any())).thenAnswer(i -> i.getArgument(0));
@@ -59,6 +65,7 @@ class IssueRequestServiceTest {
 
     @Test
     void mapsDuplicateToDuplicateStatus() {
+        when(availabilityCache.isSoldOut(100L, 10L)).thenReturn(false);
         when(client.issue(anyLong(), anyLong(), anyLong()))
                 .thenReturn(IssueAcceptanceResult.duplicate("req-2"));
         when(repository.save(any())).thenAnswer(i -> i.getArgument(0));
@@ -71,6 +78,7 @@ class IssueRequestServiceTest {
 
     @Test
     void mapsInternalErrorToRejectedStatus() {
+        when(availabilityCache.isSoldOut(100L, 10L)).thenReturn(false);
         when(client.issue(anyLong(), anyLong(), anyLong()))
                 .thenReturn(IssueAcceptanceResult.internalError("circuit-open"));
         when(repository.save(any())).thenAnswer(i -> i.getArgument(0));
@@ -82,6 +90,20 @@ class IssueRequestServiceTest {
         assertEquals(IssueRequestStatus.REJECTED, outcome.issueRequest().getStatus());
     }
 
+    /** ADR-011: cache 가 매진 표시 → B 호출 자체를 skip 하고 SOLD_OUT 단락. audit 은 SOLD_OUT 으로 적재. */
+    @Test
+    void shortCircuitsSoldOutAtEntryWhenCacheHits() {
+        when(availabilityCache.isSoldOut(100L, 10L)).thenReturn(true);
+        when(repository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        IssueOutcome outcome = service.issue(new IssueCommand(1L, 100L, 10L));
+
+        assertEquals(IssueAcceptanceStatus.SOLD_OUT, outcome.downstreamStatus());
+        assertEquals(IssueRequestStatus.SOLD_OUT, outcome.issueRequest().getStatus());
+        verify(client, never()).issue(anyLong(), anyLong(), anyLong());
+        verify(repository).save(any());
+    }
+
     /**
      * 동시 트래픽 스모크 — 200 동시 요청에 대해 client / repository 가 모두 호출되는지.
      * 실제 1000 TPS 측정은 k6, 단위 테스트는 일관성 invariant 만 검증.
@@ -89,6 +111,7 @@ class IssueRequestServiceTest {
     @Test
     void allConcurrentRequestsReachClientAndRepository() throws Exception {
         int concurrency = 200;
+        when(availabilityCache.isSoldOut(anyLong(), anyLong())).thenReturn(false);
         when(client.issue(anyLong(), anyLong(), anyLong()))
                 .thenReturn(IssueAcceptanceResult.accepted("req-x"));
         when(repository.save(any())).thenAnswer(i -> {

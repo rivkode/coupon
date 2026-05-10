@@ -15,12 +15,15 @@ import com.promotion.serverc.infrastructure.persistence.OutboxEventJpaEntity;
 import com.promotion.serverc.infrastructure.persistence.OutboxEventJpaRepository;
 import com.promotion.serverc.infrastructure.persistence.UserCouponJpaEntity;
 import com.promotion.serverc.infrastructure.persistence.UserCouponJpaRepository;
+import com.promotion.serverc.infrastructure.redis.CouponAvailabilityCache;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -51,6 +54,7 @@ public class CouponIssueProcessor {
     private final EventJpaRepository eventRepository;
     private final OutboxEventJpaRepository outboxRepository;
     private final ObjectMapper objectMapper;
+    private final CouponAvailabilityCache availabilityCache;
 
     @Transactional
     public void process(CouponIssueRequestPayload request) {
@@ -79,6 +83,7 @@ public class CouponIssueProcessor {
         if (!inventory.decrement()) {
             saveResult(request, UserCouponStatus.SOLD_OUT, null, now);
             saveOutbox(toResultPayload(request, CouponIssueResultStatus.SOLD_OUT, null, now));
+            registerAvailabilityCheck(request.eventId(), request.couponTypeId());
             log.info("sold out: eventId={}, couponTypeId={}", request.eventId(), request.couponTypeId());
             return;
         }
@@ -92,7 +97,30 @@ public class CouponIssueProcessor {
             return;
         }
         saveOutbox(toResultPayload(request, CouponIssueResultStatus.SUCCESS, code, now));
+        registerAvailabilityCheck(request.eventId(), request.couponTypeId());
         log.info("issued: code={}, userId={}, couponTypeId={}", code, request.userId(), request.couponTypeId());
+    }
+
+    /**
+     * ADR-011 — 트랜잭션 커밋 직후 재고를 fresh read 해서 0 이면 negative cache 적재.
+     * 트랜잭션 안에서 결정하지 않는 이유: 롤백 시 ghost cache write 방지 + 동시 다른 tx 가
+     * 더 진행시킨 최종 상태를 반영. cache write 자체는 best-effort (캐시는 권위 아님).
+     */
+    private void registerAvailabilityCheck(long eventId, long couponTypeId) {
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                try {
+                    inventoryRepository.findByEventIdAndCouponTypeId(eventId, couponTypeId)
+                            .filter(inv -> inv.getAvailableCount() == 0)
+                            .ifPresent(inv -> availabilityCache.markSoldOut(eventId, couponTypeId));
+                } catch (Exception ex) {
+                    // MySQL hiccup / 커넥션 풀 고갈 등 — silent fail 방지. cache 누락은 다음 SOLD_OUT 호출이 회복.
+                    log.warn("availability post-check failed (cache write skipped): eventId={}, couponTypeId={} reason={}",
+                            eventId, couponTypeId, ex.getMessage());
+                }
+            }
+        });
     }
 
     private void saveResult(CouponIssueRequestPayload request, UserCouponStatus status,

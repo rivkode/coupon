@@ -122,3 +122,6 @@ app:
   event-cache:
     ttl-seconds: ${EVENT_CACHE_TTL_SECONDS:300}                # 5 분
     refresh-interval-ms: ${EVENT_CACHE_REFRESH_MS:60000}       # 1 분 (TTL/5 — 항상 4 분+ 살아있음)
+  # ADR-011 SOLD_OUT negative cache. afterCommit hook 이 재고 0 이면 SET. B 가 EXISTS 로 단락.
+  cache:
+    coupon-available-ttl-seconds: ${COUPON_AVAILABLE_TTL_SECONDS:86400}   # 24h (B 의 pending hash TTL 와 동일)

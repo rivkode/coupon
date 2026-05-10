@@ -182,9 +182,20 @@
 - 결정: `user_coupon` 의 `@Version` 컬럼으로 낙관적 락. 실패 시 클라이언트에 재시도 안내.
 - 근거: 한 쿠폰을 동시에 사용하려는 시도는 발급보다 훨씬 적음. 비관적 락은 오버헤드.
 
-### ADR-008: B 의 Kafka publish 실패는 producer 재시도 + 스케줄러 보완
-- 결정: B 가 Kafka publish 시 Spring Kafka producer 의 `acks=all` + `enable.idempotence=true` + `retries` 로 일시 장애 흡수. 그래도 실패하면 Redis 의 pending 상태로 남고, B 의 `@Scheduled` 가 10 초 후 C 의 internal GET API 로 직접 조회하여 보완.
-- 근거: Redis + Kafka 는 원자적이지 않음. Outbox 를 B 에 두면 RDBMS 가 추가로 필요해 책임이 커짐. 1 인 1 장 UNIQUE 가 중복 publish 를 방어하므로 직접 publish + 스케줄러 보완이 충분.
+### ADR-008: B 의 publish 보장 — producer 재시도 + 스케줄러 재발행 (횟수 cap)
+- 결정: B 가 Kafka publish 시 Spring Kafka producer 의 `acks=all` + `enable.idempotence=true` + `retries` 로 일시 장애 흡수. 그래도 실패한 신청은 Redis 에 PENDING 상태로 남고, B 의 `@Scheduled` 가 cutoff(10s) 초과 PENDING 을 다음 순서로 처리한다:
+    1. C 의 internal GET 으로 결과 조회 → 발견되면 Redis 결과 동기화 (Mode B/C 회복)
+    2. C 가 모르고 `publishAttempts < max(=3)` 면 Kafka **재발행** + `HINCRBY publishAttempts` + `lastPublishedAt` 으로 ZSET score 갱신 (다음 cycle 까지 cutoff 만큼 grace)
+    3. `publishAttempts ≥ max` 에 도달하면 FAILED 마감 + Micrometer counter `pending.scheduler.give_up` 증가
+- 근거: Redis 적재와 Kafka publish 가 atomic 이 아니라 publish 자체가 유실되는 Mode A 가 존재. 단순 조회만 하던 이전 설계는 Mode A 에서 at-least-once 를 만족하지 못했다 — "Redis 에 PENDING 이 있다 = 처리 의도가 커밋됐다" 를 진실로 보고 재발행으로 회복.
+- SLA: 카운터를 publish 시도 직전에 INCR 하므로 영구 publish 장애에서도 cutoff(10s) × max(3) = **30s 안에 결론**이 보장됨 (FAILED 또는 SUCCESS).
+- 안전성: C 의 `(user_id, coupon_type_id)` UNIQUE + outbox 멱등 처리(중복 메시지는 early return) 가 이중 발급을 차단. 결과 메시지는 원본/재발행 중 먼저 처리된 메시지 한 건에서만 emit.
+- 트레이드오프: C 가 영구 장애일 때 max 까지 시도 후 FAILED 종결. 이후 C 가 복구되어 늦게 도착한 메시지로 결과가 들어오면 result consumer 가 hash 를 SUCCESS 로 덮어씀 (Redis hash 유지, ZSET 은 비어있어 스케줄러 재진입 없음).
+- Accept 단계 publish 실패: `CouponIssueAcceptService` 는 publish 실패를 swallow → 항상 ACCEPTED 응답. 5xx → DUPLICATE 흐름의 UX 모호성을 제거하고 회복은 전적으로 스케줄러에 위임.
+- 전제: **단일 server-b 인스턴스**. 다중 인스턴스에서는 ZRANGEBYSCORE 가 동일 항목을 동시에 잡을 수 있어 cap 의 의미가 약해진다 (UNIQUE 가 정합성은 보호). 다중 인스턴스가 필요하면 별도 leader election 또는 ZPOPMIN 기반 work-stealing 도입.
+- 배포 호환: 배포 직전 in-flight 항목은 publishAttempts 필드가 없어 fallback=1 로 해석 → 신규 항목 대비 재시도 한도가 한 회 줄어들 수 있음. UNIQUE 가 안전성 보호.
+- 미적용: B 자체에 RDBMS Outbox 도입은 1 vCPU 자원 + ADR-006 (B = Redis only) 와 충돌하므로 보류.
+- 스케줄러 전용 publish timeout: 기본 흐름의 3s 와 분리해 `app.kafka.scheduler-send-timeout-ms` (기본 500ms). cycle (`fixed-delay` 1s) × batch(50) 의 cumulative latency 폭주 방지.
 
 ### ADR-009: B↔C 양방향 Kafka (issue 토픽 + result 토픽)
 - 결정: B → C 는 발급 신청 이벤트 (`coupon-issue-request`), C → B 는 발급 결과 이벤트 (`coupon-issue-result`).
@@ -195,6 +206,16 @@
 - 결정: `IssueRequest` 를 요청당 한 번 JPA save() / commit. batch insert 큐 없음.
 - 근거: 신규 흐름은 응답 latency 가 즉시 "접수 완료" 라 짧음 → A 에 별도 비동기 큐를 둘 필요 없음. 단순함이 우선.
 - 측정: 1 vCPU MySQL-A 가 1000 commit/sec 를 처리 못 하면 batch 로 회귀 검토.
+
+### ADR-011: 매진 신호의 negative cache (A 단락 + C 쓰기)
+- 결정: `coupon:available:{eventId}:{couponTypeId}` 키 — 존재만으로 SOLD_OUT 표현 (값은 의미 없음). **A 의 `IssueRequestService` 진입부**에서 `EXISTS` 로 단락하고 (B 호출 자체를 skip + `IssueAcceptanceStatus.SOLD_OUT` 응답 + audit log 는 SOLD_OUT 으로 기록). C 의 `CouponIssueProcessor` 가 트랜잭션 `afterCommit` hook 에서 inventory 를 fresh read 해 `availableCount == 0` 이면 `SET EX(24h)`.
+- 근거: 재고 권위는 여전히 C MySQL (ADR-003 유지). 본 캐시는 매진 후 후속 요청의 A→B HTTP + Redis savePending + Kafka 왕복 + C 비관적 락을 모두 제거하는 비용 절감 cache. **차단 위치를 A 진입으로 두면 B/C 자원이 매진 트래픽으로 낭비되지 않음** — 가장 일찍 단락. 평가 항목 ③ Hot Spot 에 정렬.
+- afterCommit + fresh read 이유: 트랜잭션 안에서 결정하면 롤백 시 ghost write 가능 + 동시 다른 tx 의 최종 상태를 반영 못 함. 커밋 후 별도 read 로 "현재 권위 상태가 0" 임을 확인한 뒤에만 cache 적재.
+- 트레이드오프:
+    - Race 윈도우: cache SET 직전 통과한 요청은 정상 흐름으로 진입해 C 가 SOLD_OUT 처리. 사용자에게는 동일한 SOLD_OUT 결과 (latency 만 다름).
+    - Cache miss/Redis blip: B 가 fall-through → 정상 흐름. degrade 하지 않음.
+    - Admin restock: cache 가 stale FALSE 로 남으므로 admin 운영 시 키 수동 삭제 필요.
+- 안전성: cache 는 권위 아님. stale 이 정합성을 깨지 않음. C 의 비관적 락 + UNIQUE 가 권위.
 
 ---
 
@@ -266,9 +287,10 @@ promotion/
 - `issue_request` (request_id PK, user_id, event_id, coupon_type_id, status, created_at)
 
 ### Server B (Redis only)
-- `issue:pending:{user_id}:{coupon_type_id}` — Hash (status / created_at / event_id / request_id)
-- `issue:pending:zset` — Sorted Set (member = `user_id:coupon_type_id`, score = created_at epoch ms) — 스케줄러 ZRANGEBYSCORE 용
+- `issue:pending:{user_id}:{coupon_type_id}` — Hash (status / created_at / event_id / request_id / publishAttempts / lastPublishedAt)
+- `issue:pending:zset` — Sorted Set (member = `user_id:coupon_type_id`, score = createdAt 또는 lastPublishedAt epoch ms) — 스케줄러 ZRANGEBYSCORE 용
 - `event:{event_id}` — Hash (cache, TTL)
+- `coupon:available:{event_id}:{coupon_type_id}` — ADR-011 SOLD_OUT negative cache. 키 존재 = 매진. 값 의미 없음. TTL 24h. **C 가 쓰고 A 가 읽음** (A 진입에서 단락).
 
 ### Server C (MySQL — schema `server_c`)
 - `event` (event_id PK, name, content, started_at, ended_at)
@@ -287,7 +309,7 @@ promotion/
 ## 10. 절대 하지 말 것 (Anti-patterns)
 
 - ❌ A 에서 RDBMS 트랜잭션을 길게 잡기 (특히 외부 호출 포함)
-- ❌ 재고를 Redis 로 관리 (신규 설계는 C 의 MySQL 비관적 락이 권위 — Redis 는 캐시일 뿐)
+- ❌ 재고를 Redis 로 관리 (신규 설계는 C 의 MySQL 비관적 락이 권위 — Redis 는 캐시일 뿐. 단 SOLD_OUT 신호 negative cache 는 ADR-011 에 따라 허용 — 권위 아닌 비용 절감 목적)
 - ❌ A→B 호출에 timeout/circuit breaker 없음
 - ❌ Kafka 메시지 처리 시 멱등성 보장 안 함 (UNIQUE constraint 누락)
 - ❌ `@Transactional` 안에서 외부 API/Kafka 호출 (트랜잭션 길어짐 — Outbox 로 분리)

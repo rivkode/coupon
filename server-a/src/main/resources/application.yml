@@ -4,6 +4,20 @@ spring:
   threads:
     virtual:
       enabled: true
+  # ADR-011: A 진입부에서 SOLD_OUT negative cache 단락. timeout 짧게 — Redis blip 시 fall-through 가 빠름.
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 500ms
+      connect-timeout: 500ms
+      lettuce:
+        pool:
+          enabled: true
+          max-active: 16
+          max-idle: 8
+          min-idle: 2
+          max-wait: 200ms
   datasource:
     url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/server_a?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
     username: ${DB_USER:promotion}
@@ -70,6 +84,10 @@ app:
     read-timeout-millis: 1000
 
 # ADR-001: A→B 호출 보호. Circuit Breaker + Retry (Bucket4j / Bulkhead 미사용).
+# 격리 검증 결과 (docs/reports/load-test-bottleneck-analysis.md):
+#  - retry max-attempts=3 + slow-call=500ms 가 부하 증폭의 결정적 요인이었음
+#    (1초 timeout × 3 호출 = 3초 응답 → server-b 부하 3배 → 더 많은 slow-call → CB 트립)
+#  - 균형점: retry 는 transient 한 번만 흡수 + CB 는 read-timeout 의 80% 임계로 완화
 resilience4j:
   circuitbreaker:
     instances:
@@ -78,19 +96,21 @@ resilience4j:
         sliding-window-size: 20
         minimum-number-of-calls: 10
         failure-rate-threshold: 50
-        slow-call-rate-threshold: 50
-        slow-call-duration-threshold: 500ms
+        # read-timeout=1s 대비 800ms (80%) — 일시 spike 흡수, 진짜 1s timeout 만 slow 로 분류.
+        slow-call-rate-threshold: 70
+        slow-call-duration-threshold: 800ms
         wait-duration-in-open-state: 5s
         permitted-number-of-calls-in-half-open-state: 3
         automatic-transition-from-open-to-half-open-enabled: true
         register-health-indicator: true
-  # Retry 는 transient 실패(네트워크 블립, B 인스턴스 재시작 등) 흡수 목적.
-  # 첫 호출 + 재시도 2회 = 총 3회. CB OPEN 이거나 4xx 면 retry 하지 않음.
+  # Retry 는 transient 실패(네트워크 블립, B 의 GC pause 1회 등) 흡수 목적.
+  # max-attempts=2 = 첫 호출 + 재시도 1회. 부하 증폭을 최소화하면서 단발성 실패는 자동 복구.
+  # CB OPEN 이거나 4xx 면 retry 하지 않음 (retry storm 방지).
   # 멱등성 안전성: B 의 Redis (user_id, coupon_type_id) dedup + C 의 UNIQUE 가 중복을 방어.
   retry:
     instances:
       couponIssuing:
-        max-attempts: 3
+        max-attempts: 2
         wait-duration: 50ms
         enable-exponential-backoff: true
         exponential-backoff-multiplier: 2
