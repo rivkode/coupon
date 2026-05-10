@@ -18,7 +18,7 @@ docker compose up -d --build
 ## 쿠폰 서비스 설계
 
 - [요구사항 분석](docs/design/requirements.md)
-- [시스템 아키텍처](docs/design/architecture.md)
+- [시스템 아키텍처 (data-flow)](docs/design/architecture.md)
 - [다이어그램](docs/design/diagrams.md)
   - [시퀀스 다이어그램](docs/design/diagram-sequence.md)
   - [상태 다이어그램](docs/design/diagram-state.md)

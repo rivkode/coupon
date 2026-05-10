@@ -16,7 +16,7 @@
 
 ## 시스템 아키텍처 / Data Flow
 
-![system-design-dataflow](../photo/system-design-dataflow.png)
+![system-design-dataflow](../photo/system-design-flow.png)
 
 > 다이어그램의 라벨은 `(순서-서버)` 형식입니다. 예를 들어 `(1-a)` 는 첫 번째 단계, Server A 의 동작.
 > Server A = 진입(Gateway), Server B = 신청 접수 + 결과 캐시, Server C = 영구 저장 + 재고 권위.
