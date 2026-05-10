@@ -42,6 +42,10 @@ docker compose up -d --build
 - [인프라 사이징](docs/reports/infra-sizing.md)
   - k6 로 단일 인스턴스 TPS 를 측정하고 Little's Law (L = λW) 로 목표 부하에 필요한 인스턴스 수를 산정한다.
 
+## 과제 관련 스터디
+
+- [학습 노트](docs/study.md) — 본 과제를 수행하며 처음 학습한 내용들을 정리 (TCP timeout, HikariCP 풀 사이즈 실측, Kafka at-least-once, Outbox 적용 조건, 비동기 끊는 지점, Redis 명령어 등 7 항목)
+
 ---
 
 # 성능 테스트 환경
