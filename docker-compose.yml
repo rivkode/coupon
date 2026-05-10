@@ -61,6 +61,8 @@ services:
   kafka:
     image: apache/kafka:3.7.0
     container_name: promotion-kafka
+    # 단일 broker 가 500 TPS 부하에서 단일 코어 saturation. 호스트 자원 양보 명시 (Mac dev 환경).
+    cpus: 2.0
     ports:
       - "9092:9092"
       - "29092:29092"
@@ -185,7 +187,7 @@ services:
       DB_HOST: mysql-a
       DB_PORT: 3306
       SERVER_B_URL: http://server-b:8081
-      HIKARI_POOL_SIZE: ${HIKARI_POOL_SIZE_A:-20}
+      HIKARI_POOL_SIZE: ${HIKARI_POOL_SIZE_A:-30}
       # ADR-011: A 의 SOLD_OUT negative cache 단락용 (B/C 와 동일 Redis 인스턴스 공유).
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -252,6 +254,11 @@ services:
       REDIS_PORT: 6379
       EVENT_CACHE_TTL_SECONDS: ${EVENT_CACHE_TTL_SECONDS:-300}
       EVENT_CACHE_REFRESH_MS: ${EVENT_CACHE_REFRESH_MS:-60000}
+      # ADR-003 권장 범위 상한 — 500 TPS 처리 목표를 위한 throttle 완화.
+      # 이전 측정에서 50/sec 처리 (10 records × 5 polls/sec) 였음. 50 records × 3 thread → ~300/sec 목표.
+      # concurrency=3 은 partition 수(3) 와 일치 — 그 이상은 idle thread.
+      SPRING_KAFKA_CONSUMER_MAX_POLL_RECORDS: ${KAFKA_CONSUMER_MAX_POLL_RECORDS:-50}
+      SPRING_KAFKA_LISTENER_CONCURRENCY: ${KAFKA_LISTENER_CONCURRENCY:-3}
     depends_on:
       mysql-c:
         condition: service_healthy
