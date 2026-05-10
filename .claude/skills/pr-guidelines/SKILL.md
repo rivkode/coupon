@@ -39,7 +39,44 @@ description: Pull Request를 생성하거나 PR 설명을 작성할 때 사용�
 - 새 작업 시작 시 `git checkout main && git pull origin main` 후 분기.
 - `main` 직접 push 금지. 모든 변경은 feature 브랜치 → PR → main.
 
-### 2.2 브랜치 네이밍
+### 2.2 커밋/PR 시작 표준 워크플로 (commit + PR 요청 시)
+
+사용자가 "커밋 + PR 생성" 을 요청하면 **반드시 다음 순서**로 진행한다.
+**stacked PR 금지** — 항상 main 의 최신 위에서 분기한다.
+
+```bash
+# 1. 현재 작업 보호 (다른 브랜치에 있어도 안전하게)
+git stash push -u -m "<짧은 설명>"
+
+# 2. main 으로 이동 + 최신화 (origin 기준)
+git checkout main
+git pull origin main
+
+# 3. main 위에서 새 feature 브랜치 분기
+git checkout -b <type>/<scope>-<short-description>
+
+# 4. 작업 내용 복원
+git stash pop
+
+# 5. 빌드/테스트 통과 확인
+./gradlew :<module>:test  # 또는 변경 범위에 맞는 task
+
+# 6. 의미 단위 커밋 (Conventional Commits)
+git add <변경 파일들>     # `git add -A` / `.` 지양 (.env 등 사고 방지)
+git commit -m "..."
+
+# 7. 원격 push + PR 생성
+git push -u origin <branch>
+gh pr create --base main --title "..." --body "$(cat <<'EOF' ... EOF)"
+```
+
+**주의 사항**:
+- 이미 main 브랜치인데 unstaged 변경이 있다면 stash 단계는 생략 가능 — 단 push 전 `git pull --rebase origin main` 으로 최신화.
+- stash 가 충돌 나면 stop 하고 사용자에게 보고 (자동 해결 시도 금지).
+- PR 본문은 §4 의 템플릿을 사용. 빈 body 로 생성하지 않는다.
+- PR 생성 후 응답에는 PR URL 을 그대로 남긴다 (사용자가 바로 열어볼 수 있도록).
+
+### 2.3 브랜치 네이밍
 
 ```
 <type>/<scope>-<short-description>
