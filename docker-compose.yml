@@ -219,10 +219,16 @@ services:
       DB_HOST: mysql
       DB_PORT: 3306
       KAFKA_BOOTSTRAP: kafka:9092
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      EVENT_CACHE_TTL_SECONDS: ${EVENT_CACHE_TTL_SECONDS:-300}
+      EVENT_CACHE_REFRESH_MS: ${EVENT_CACHE_REFRESH_MS:-60000}
     depends_on:
       mysql:
         condition: service_healthy
       kafka:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8082/actuator/health | grep -q UP || exit 1"]

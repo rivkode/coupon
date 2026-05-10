@@ -4,6 +4,7 @@ import com.promotion.serverc.api.dto.ApiResponse;
 import com.promotion.serverc.api.dto.ErrorResponse;
 import com.promotion.serverc.api.dto.ErrorResponse.FieldError;
 import com.promotion.serverc.domain.exception.CouponNotFoundException;
+import com.promotion.serverc.domain.exception.EventNotFoundException;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,6 +42,12 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(CouponNotFoundException.class)
     public ResponseEntity<ApiResponse<Void>> handleNotFound(CouponNotFoundException ex) {
         ErrorResponse error = ErrorResponse.of("NOT_FOUND", "coupon not found");
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.failure(error));
+    }
+
+    @ExceptionHandler(EventNotFoundException.class)
+    public ResponseEntity<ApiResponse<Void>> handleEventNotFound(EventNotFoundException ex) {
+        ErrorResponse error = ErrorResponse.of("EVENT_NOT_FOUND", "event not found");
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.failure(error));
     }
 
