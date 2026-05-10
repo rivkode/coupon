@@ -69,7 +69,7 @@ app:
     # 응답 모델이 "접수 완료" 라 1s latency 허용 (docs/reports/load-test-bottleneck-analysis.md).
     read-timeout-millis: 1000
 
-# ADR-001: A→B 호출 보호. Circuit Breaker 만 사용 (Bucket4j / Bulkhead 미사용).
+# ADR-001: A→B 호출 보호. Circuit Breaker + Retry (Bucket4j / Bulkhead 미사용).
 resilience4j:
   circuitbreaker:
     instances:
@@ -84,3 +84,19 @@ resilience4j:
         permitted-number-of-calls-in-half-open-state: 3
         automatic-transition-from-open-to-half-open-enabled: true
         register-health-indicator: true
+  # Retry 는 transient 실패(네트워크 블립, B 인스턴스 재시작 등) 흡수 목적.
+  # 첫 호출 + 재시도 2회 = 총 3회. CB OPEN 이거나 4xx 면 retry 하지 않음.
+  # 멱등성 안전성: B 의 Redis (user_id, coupon_type_id) dedup + C 의 UNIQUE 가 중복을 방어.
+  retry:
+    instances:
+      couponIssuing:
+        max-attempts: 3
+        wait-duration: 50ms
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+        retry-exceptions:
+          - org.springframework.web.client.ResourceAccessException
+          - org.springframework.web.client.HttpServerErrorException
+        ignore-exceptions:
+          - io.github.resilience4j.circuitbreaker.CallNotPermittedException
+          - org.springframework.web.client.HttpClientErrorException

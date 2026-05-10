@@ -14,9 +14,10 @@ dependencies {
 	implementation("org.flywaydb:flyway-core")
 	implementation("org.flywaydb:flyway-mysql")
 
-	// ADR-001: A→B sync HTTP 호출 보호 (Circuit Breaker).
+	// ADR-001: A→B sync HTTP 호출 보호 (Circuit Breaker + transient 실패 Retry).
 	implementation("io.github.resilience4j:resilience4j-spring-boot3:2.3.0")
 	implementation("io.github.resilience4j:resilience4j-circuitbreaker:2.3.0")
+	implementation("io.github.resilience4j:resilience4j-retry:2.3.0")
 
 	implementation("io.micrometer:micrometer-registry-prometheus")
 

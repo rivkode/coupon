@@ -5,6 +5,7 @@ import com.promotion.common.coupon.IssueAcceptanceStatus;
 import com.promotion.servera.application.CouponIssuingClient;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import io.github.resilience4j.retry.annotation.Retry;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,6 +25,7 @@ public class RestClientCouponIssuingClient implements CouponIssuingClient {
     private final RestClient couponIssuingRestClient;
 
     @Override
+    @Retry(name = CB_NAME)
     @CircuitBreaker(name = CB_NAME, fallbackMethod = "issueFallback")
     public IssueAcceptanceResult issue(long userId, long eventId, long couponTypeId) {
         IssueRequestPayload payload = new IssueRequestPayload(eventId, couponTypeId);
