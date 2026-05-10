@@ -64,7 +64,7 @@ TOTAL_INVENTORY=1000000 ./load-test/run-integrated.sh
 | `COUPON_TYPE_ID` | `1` | 부하 대상 쿠폰 타입 |
 | `TOTAL_INVENTORY` | `10000` | 시드 시 재고 row 의 `total_inventory` / `available_count` |
 | `DRAIN_WAIT_SECONDS` | `10` | k6 종료 후 Kafka consume 잔여 처리 대기 |
-| `MYSQL_CONTAINER` | `promotion-mysql` | docker exec 대상 |
+| `MYSQL_CONTAINER` | `promotion-mysql-c` | docker exec 대상 (시드/집계는 모두 server-c MySQL) |
 
 ---
 

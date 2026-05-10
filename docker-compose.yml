@@ -1,16 +1,40 @@
 services:
-  mysql:
+  # ADR-006 Database per Service. Server A 와 Server C 는 각자 독립 MySQL 인스턴스.
+  # Server B 는 Redis only (MySQL 없음).
+  # 호스트 포트는 3306 (mysql-a) / 3307 (mysql-c) — 충돌 회피. 컨테이너 내부는 모두 3306.
+  mysql-a:
     image: mysql:8.0
-    container_name: promotion-mysql
+    container_name: promotion-mysql-a
     environment:
       MYSQL_ROOT_PASSWORD: rootpassword
       MYSQL_USER: promotion
       MYSQL_PASSWORD: promotion
+      # 단일 schema 만 자동 생성 — 사용자 promotion 에 자동 권한 부여.
+      MYSQL_DATABASE: server_a
     ports:
       - "3306:3306"
     volumes:
-      - mysql_data:/var/lib/mysql
-      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - mysql_a_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-prootpassword"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - promotion-net
+
+  mysql-c:
+    image: mysql:8.0
+    container_name: promotion-mysql-c
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_USER: promotion
+      MYSQL_PASSWORD: promotion
+      MYSQL_DATABASE: server_c
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_c_data:/var/lib/mysql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-prootpassword"]
       interval: 10s
@@ -158,12 +182,12 @@ services:
     ports:
       - "8080:8080"
     environment:
-      DB_HOST: mysql
+      DB_HOST: mysql-a
       DB_PORT: 3306
       SERVER_B_URL: http://server-b:8081
       HIKARI_POOL_SIZE: ${HIKARI_POOL_SIZE_A:-20}
     depends_on:
-      mysql:
+      mysql-a:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q UP || exit 1"]
@@ -216,7 +240,7 @@ services:
     ports:
       - "8082:8082"
     environment:
-      DB_HOST: mysql
+      DB_HOST: mysql-c
       DB_PORT: 3306
       KAFKA_BOOTSTRAP: kafka:9092
       REDIS_HOST: redis
@@ -224,7 +248,7 @@ services:
       EVENT_CACHE_TTL_SECONDS: ${EVENT_CACHE_TTL_SECONDS:-300}
       EVENT_CACHE_REFRESH_MS: ${EVENT_CACHE_REFRESH_MS:-60000}
     depends_on:
-      mysql:
+      mysql-c:
         condition: service_healthy
       kafka:
         condition: service_healthy
@@ -240,7 +264,8 @@ services:
       - promotion-net
 
 volumes:
-  mysql_data:
+  mysql_a_data:
+  mysql_c_data:
   redis_data:
   kafka_data:
   prometheus_data:
