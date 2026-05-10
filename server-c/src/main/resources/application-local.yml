@@ -1,0 +1,16 @@
+# 로컬 개발 프로파일.
+# 활성화: ./gradlew :server-c:bootRun --args='--spring.profiles.active=local'
+# mysql-c 컨테이너는 호스트 포트 3307 로 노출 (mysql-a 와 충돌 회피).
+spring:
+  config:
+    activate:
+      on-profile: local
+  datasource:
+    url: jdbc:mysql://localhost:3307/server_c?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    username: promotion
+    password: promotion
+
+logging:
+  level:
+    com.promotion: DEBUG
+    org.springframework.web: DEBUG

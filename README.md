@@ -146,7 +146,7 @@ curl -sS http://localhost:8082/actuator/health   # server-c
 ### 개발 편의 — bootRun 모드 (자원 제약 없음)
 
 ```bash
-docker compose up -d mysql redis kafka                   # 인프라만
+docker compose up -d mysql-a mysql-c redis kafka         # 인프라만
 ./gradlew :server-c:bootRun &
 ./gradlew :server-b:bootRun --args='--spring.profiles.active=local' &
 ./gradlew :server-a:bootRun &
@@ -185,7 +185,8 @@ docker compose up -d mysql redis kafka                   # 인프라만
 | Server A | `:8080` | `/actuator/health` |
 | Server B | `:8081` | `/actuator/health` |
 | Server C | `:8082` | `/actuator/health` |
-| MySQL | `:3306` | schemas: `server_a`, `server_c` |
+| MySQL-A | `:3306` | schema `server_a` (server-a 전용, 컨테이너 `promotion-mysql-a`) |
+| MySQL-C | `:3307` | schema `server_c` (server-c 전용, 컨테이너 `promotion-mysql-c`) |
 | Redis | `:6379` | — |
 | Kafka | `:9092` (INTERNAL) / `:29092` (HOST) | — |
 | Kafka UI | `http://localhost:8085` | — |

@@ -176,7 +176,7 @@
 ### ADR-006: 데이터베이스는 서비스별 분리 (Database per Service)
 - 결정: Server A 의 MySQL (issue_request), Server B 의 Redis (pending/event cache), Server C 의 MySQL (event/coupon_type/inventory/user_coupon/outbox) 각자 다른 schema.
 - 근거: 서비스 독립 배포, 결합도 감소.
-- 비고: 로컬 개발에서는 docker-compose 단일 MySQL 에 다른 schema.
+- 비고: docker-compose 도 서비스별 컨테이너 분리 (`promotion-mysql-a` 호스트 3306 / `promotion-mysql-c` 호스트 3307). 각 컨테이너는 단일 schema 만 보유.
 
 ### ADR-007: 쿠폰 사용(Redeem) 은 낙관적 락
 - 결정: `user_coupon` 의 `@Version` 컬럼으로 낙관적 락. 실패 시 클라이언트에 재시도 안내.

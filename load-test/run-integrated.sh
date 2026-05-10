@@ -28,7 +28,9 @@ COUPON_TYPE_ID="${COUPON_TYPE_ID:-1}"
 TOTAL_INVENTORY="${TOTAL_INVENTORY:-10000}"
 SCENARIO="${SCENARIO:-load-test/scenarios/issue-1k-tps.js}"
 
-MYSQL_CONTAINER="${MYSQL_CONTAINER:-promotion-mysql}"
+# 시드/집계 대상은 server-c 의 MySQL — 마스터 데이터 / 재고 / user_coupon / outbox 모두 promotion-mysql-c 에 위치.
+# server-a 의 issue_request 는 audit 용이라 별도 시드 불필요 (요청 흐름으로 자연 적재).
+MYSQL_CONTAINER="${MYSQL_CONTAINER:-promotion-mysql-c}"
 MYSQL_ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD:-rootpassword}"
 
 # MYSQL_PWD 를 컨테이너 안으로 전달 — `-p` CLI 옵션의 password warning 제거.
