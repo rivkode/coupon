@@ -386,6 +386,7 @@ A → B → C 흐름에서 **어느 지점부터 비동기로** 처리할지가 
 |---|---|---|---|
 | `SET` | String | O(1) | 캐시 적재 (예: `event:{id}`, `coupon:available:{...}`) |
 | `GET` | String | O(1) | 캐시 조회 |
+| `HSETNX` | Hash | O(1) | 신청 first-write 판정 (atomic guard, `(user, type)` 중복 차단) |
 | `HSET` / `HGETALL` | Hash | O(1) / O(N) | 신청 상세 갱신 / 폴링 응답용 (N = field 수) |
 | `ZADD` | Sorted Set | O(log N) | 스케줄러 work queue 등록 (score = createdAt) |
 | `ZRANGEBYSCORE` | Sorted Set | O(log N + M) | cutoff 초과 항목 batch fetch (M = 결과 수) |

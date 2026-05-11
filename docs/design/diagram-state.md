@@ -229,7 +229,7 @@ stateDiagram-v2
 
 | From | To | 트리거 | 메커니즘 |
 |---|---|---|---|
-| (없음) | `PENDING` | B accept (cache miss) | HSET + ZADD |
+| (없음) | `PENDING` | B accept (cache miss) | `HSETNX` (first-write) → `HSET` 나머지 필드 + `ZADD` |
 | `PENDING` | `SUCCESS` / `SOLD_OUT` / `FAILED` | result consumer (Kafka) | `markResult` — HASH update + ZSET ZREM |
 | `PENDING` | `SUCCESS` / `SOLD_OUT` / `FAILED` | 스케줄러 lookup C HIT | 동일 (`markResult`) |
 | `PENDING` | `FAILED` | 스케줄러 cap 도달 | `markResult(FAILED)` — `publishAttempts ≥ maxPublishAttempts` |

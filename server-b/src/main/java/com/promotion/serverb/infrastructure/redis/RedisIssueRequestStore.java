@@ -41,7 +41,8 @@ public class RedisIssueRequestStore {
 
     /**
      * 동일 (user, couponType) 신청이 이미 있으면 false. 없으면 hash + zset 등록 후 true.
-     * EXISTS + HSET + ZADD 가 atomic 은 아니지만 single client 의 race 정도라 충분 (멱등성 권위는 C UNIQUE).
+     * HSETNX (putIfAbsent) 로 첫 필드만 atomic 하게 잡고 통과한 호출만 나머지 필드 + ZADD 를 채운다.
+     * HSETNX → HSET → ZADD 가 전체로는 atomic 이 아니지만 멱등성 권위는 C 의 UNIQUE 라 single client race 는 무해.
      */
     public boolean savePendingIfAbsent(String requestId, long userId, long eventId,
                                        long couponTypeId, Instant createdAt) {

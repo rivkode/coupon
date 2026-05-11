@@ -47,12 +47,14 @@ POST /internal/v1/coupons/issue   (A → B)
 #### 3) 쿠폰 발급 요청 저장 (3-b)
 Server B 가 Redis 에 신청 정보를 적재한다. `(userId, couponTypeId)` 단위로 중복을 차단하면서 동시에 사용자 폴링용 상세 데이터를 보관한다.
 
-- HASH 에 상세 (status=PENDING, requestId, createdAt, publishAttempts=1) 를 저장
-- ZSET 에 work queue 엔트리 등록 (스케줄러가 보는 인덱스)
+- `HSETNX` 로 첫 필드(`userId`) 만 atomic 하게 set — 이미 존재하면 중복 신청으로 보고 즉시 종료
+- 통과한 호출만 나머지 필드 (status=PENDING, requestId, createdAt, publishAttempts=1) `HSET` + ZSET 등록 (스케줄러가 보는 work queue 인덱스)
+- 멱등성의 권위는 Server C 의 `(user_id, coupon_type_id)` UNIQUE — 본 단계는 비용 절감용 first-line guard
 
 ```
-HSET issue:pending:{userId}:{couponTypeId} status PENDING ...
-ZADD issue:pending:zset {createdAt} "{userId}:{couponTypeId}"
+HSETNX issue:pending:{userId}:{couponTypeId} userId <userId>   # first-write 판정
+HSET   issue:pending:{userId}:{couponTypeId} status PENDING ... # 통과 시 나머지 필드
+ZADD   issue:pending:zset {createdAt} "{userId}:{couponTypeId}"
 ```
 
 #### 4) 쿠폰 발급 요청 저장 (4-a)
