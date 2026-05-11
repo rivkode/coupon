@@ -187,7 +187,7 @@ services:
       DB_HOST: mysql-a
       DB_PORT: 3306
       SERVER_B_URL: http://server-b:8081
-      HIKARI_POOL_SIZE: ${HIKARI_POOL_SIZE_A:-30}
+      HIKARI_POOL_SIZE: ${HIKARI_POOL_SIZE_A:-10}
       # ADR-011: A 의 SOLD_OUT negative cache 단락용 (B/C 와 동일 Redis 인스턴스 공유).
       REDIS_HOST: redis
       REDIS_PORT: 6379

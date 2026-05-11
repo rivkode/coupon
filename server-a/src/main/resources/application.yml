@@ -26,10 +26,9 @@ spring:
     hikari:
       # ADR-010: per-request commit (batch insert 미사용). 신규 흐름은 응답이 즉시 "접수 완료" 라
       # latency 가 짧음 → 별도 큐 불필요. 1 vCPU MySQL-A 의 commit 처리량은 측정 후 결정.
-      # 1 vCPU 환경에서 너무 큰 pool 은 context switching 비용으로 한계 효용이 떨어진다.
-      # 측정 결과 (docs/reports/load-test-bottleneck-analysis.md) — pool=10 은 동시성 부족,
-      # pool=50 은 server-b 가 다음 병목 → pool=20 이 헤드룸 + 효율의 균형점.
-      maximum-pool-size: ${HIKARI_POOL_SIZE:20}
+      # 측정 결과 (docs/reports/infra-sizing.md §7) — pool=10 이 steady-state 500 RPS 에서
+      # p95=50ms 로 최저 latency. pool 30~50 은 outlier / USL knee 로 오히려 악화.
+      maximum-pool-size: ${HIKARI_POOL_SIZE:10}
       connection-timeout: 3000
       validation-timeout: 1000
   jpa:
