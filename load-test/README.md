@@ -74,7 +74,7 @@ TOTAL_INVENTORY=1000000 ./load-test/run-integrated.sh
 |---|---|---|
 | `issue-1k-tps.js` | constant-arrival-rate 1000 / 1s × 60s | 인스턴스당 1000 TPS 발급 부하. p95 < 200 ms / p99 < 400 ms / 5xx < 0.5% |
 
-ADR-001 의 "B 는 즉시 접수 완료 응답" 모델이라 응답 latency 가 짧다 (Redis HSET + Kafka publish 수 ms).
+ADR-001 의 "B 는 즉시 접수 완료 응답" 모델이라 응답 latency 가 짧다 (Redis HSETNX + Kafka publish 수 ms).
 
 ---
 
