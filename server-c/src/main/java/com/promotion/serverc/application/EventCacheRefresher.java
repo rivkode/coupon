@@ -9,7 +9,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
@@ -21,6 +20,10 @@ import java.util.List;
  *
  * <p>대상 제한: status = IN_PROGRESS 만 갱신. 생성/종료/취소 상태는 빈번 조회가 없으므로 자연
  * 만료 허용.
+ *
+ * <p>{@code @Transactional} 을 붙이지 않는다. DB 조회는 repository 의 짧은 read 트랜잭션에서
+ * 끝나고 결과는 이미 DTO 로 떠 있으므로, 이후 Redis 쓰기 루프를 트랜잭션 안에 두면 커넥션만
+ * 그 시간만큼 잡고 있게 된다 (CLAUDE.md §10).
  */
 @Component
 @RequiredArgsConstructor
@@ -32,7 +35,6 @@ public class EventCacheRefresher {
     private final EventCacheStore cacheStore;
 
     @Scheduled(fixedDelayString = "${app.event-cache.refresh-interval-ms:60000}")
-    @Transactional(readOnly = true)
     public void refreshActiveEvents() {
         List<EventResponse> active = eventRepository.findByStatus(EventStatus.IN_PROGRESS).stream()
                 .map(EventResponse::from)

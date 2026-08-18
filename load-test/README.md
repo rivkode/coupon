@@ -41,8 +41,8 @@ curl -sS http://localhost:8082/actuator/health   # server-c
 
 ```bash
 ./load-test/run-integrated.sh
-# CLAUDE.md §1 명세 (이벤트당 10,000 장)
-TOTAL_INVENTORY=10000 ./load-test/run-integrated.sh
+# CLAUDE.md §1 명세 (이벤트당 100 장) — 매진 경로까지 포함해 측정
+TOTAL_INVENTORY=100 ./load-test/run-integrated.sh
 # 매진 없이 TPS 한계만 측정하려면 부하량보다 큰 값
 TOTAL_INVENTORY=1000000 ./load-test/run-integrated.sh
 ```
@@ -62,7 +62,7 @@ TOTAL_INVENTORY=1000000 ./load-test/run-integrated.sh
 | `BASE_URL` | `http://localhost:8080` | server-a endpoint |
 | `EVENT_ID` | `1` | 부하 대상 이벤트 |
 | `COUPON_TYPE_ID` | `1` | 부하 대상 쿠폰 타입 |
-| `TOTAL_INVENTORY` | `10000` | 시드 시 재고 row 의 `total_inventory` / `available_count` |
+| `TOTAL_INVENTORY` | `10000` | 시드 시 재고 row 의 `total_inventory` / `available_count`. **기본값은 처리량 측정용**으로 크게 잡아 매진이 결과를 흐리지 않게 한다. 명세 조건(100 장)으로 매진 경로를 재려면 명시적으로 지정할 것 |
 | `DRAIN_WAIT_SECONDS` | `10` | k6 종료 후 Kafka consume 잔여 처리 대기 |
 | `MYSQL_CONTAINER` | `promotion-mysql-c` | docker exec 대상 (시드/집계는 모두 server-c MySQL) |
 

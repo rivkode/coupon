@@ -1,4 +1,4 @@
-# 유량 조절
+# 유량 제어
 
 
 ![system-design-dataflow](../photo/system-design-throttle.png)

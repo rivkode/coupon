@@ -49,11 +49,6 @@ public class OutboxEventJpaEntity {
         this.status = OutboxEventStatus.PENDING;
     }
 
-    public void markPublished(LocalDateTime now) {
-        this.status = OutboxEventStatus.PUBLISHED;
-        this.publishedAt = now;
-    }
-
     public Long getOutboxEventId() { return outboxEventId; }
     public String getAggregateId() { return aggregateId; }
     public String getEventType() { return eventType; }

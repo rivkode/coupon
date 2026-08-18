@@ -28,7 +28,7 @@
   - `(user_id, coupon_type_id)` UNIQUE 로 1 인 1 장 멱등 보장
 - [캐시](docs/reports/cache.md)
   - 백그라운드 스케줄러가 Redis 캐시를 주기적으로 미리 갱신해 TTL 만료 자체를 회피, 캐시 stampede 를 차단한다.
-- [유량 조절](docs/reports/rate-limiting.md)
+- [유량 제어](docs/reports/rate-limiting.md)
   - Kafka consumer 의 `max.poll.records` / `concurrency` 로 1 vCPU MySQL-C 가 처리 가능한 만큼만 메시지를 흘려보낸다.
 - [인프라 사이징](docs/reports/infra-sizing.md)
   - k6 로 단일 인스턴스 TPS 를 측정하고 인프라 사이징을 구한다.

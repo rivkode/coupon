@@ -10,7 +10,6 @@ import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 
@@ -24,6 +23,11 @@ import java.time.Instant;
  *   <li>응답 결과(ACCEPTED / DUPLICATE / SOLD_OUT / INTERNAL_ERROR) 에 따라 IssueRequest 도메인 status 결정</li>
  *   <li>per-request commit 으로 issue_request 적재 (audit)</li>
  * </ol>
+ *
+ * <p>{@code @Transactional} 을 쓰지 않는다. 경로마다 쓰기가 {@code save()} 한 번뿐이라 함께 커밋할
+ * 두 번째 쓰기가 없고, save 앞의 Server B 호출은 이미 B 의 Redis 적재 + Kafka 발행을 끝낸 상태라
+ * 롤백으로 되돌릴 수 없다. 트랜잭션을 열면 외부 HTTP 왕복이 그 안에 들어가 CLAUDE.md §10 의
+ * 안티패턴이 되기만 한다.
  */
 @Service
 @RequiredArgsConstructor
@@ -35,7 +39,6 @@ public class IssueRequestService {
     private final CouponIssuingClient client;
     private final CouponAvailabilityCache availabilityCache;
 
-    @Transactional
     public IssueOutcome issue(IssueCommand cmd) {
         if (availabilityCache.isSoldOut(cmd.eventId(), cmd.couponTypeId())) {
             IssueRequest req = repository.save(IssueRequest.of(

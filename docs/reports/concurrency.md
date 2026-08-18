@@ -89,7 +89,7 @@ DB 가 락을 직접 관리.
 
 | 위험 | 대응 |
 |---|---|
-| 락 큐 폭주 (1 vCPU MySQL 의 처리 한계 초과) | Kafka consumer throttle (`max.poll.records=10`, `concurrency=1`) 로 **유입을 제한** — [유량 조절 보고서](rate-limiting.md) |
+| 락 큐 폭주 (1 vCPU MySQL 의 처리 한계 초과) | Kafka consumer throttle (`max.poll.records=10`, `concurrency=1`) 로 **유입을 제한** — [유량 제어 보고서](rate-limiting.md) |
 | 사용자 응답 latency 가 락 대기에 묶임 | **사용자 응답 경로에서 락을 분리** — Server A → B → Kafka 까지만 동기, 락은 C consumer 에서. [대량 트래픽 보고서](traffic.md) |
 | 트랜잭션 길어지면서 deadlock | 트랜잭션 안에서 외부 호출 금지 (Outbox 분리), 단일 row 락만 잡음 (multi-row 락 회피) |
 

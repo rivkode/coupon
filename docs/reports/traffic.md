@@ -132,6 +132,6 @@ HikariCP `maximumPoolSize` 를 단계적으로 조정한 결과:
 | `issue-500-tps.js` | 500 | 안정 처리 (p95 / p99 / 5xx 임계 통과) |
 | `issue-1k-tps.js` | 1,000 | 일부 에러 발생 — [인프라 사이징 보고서](infra-sizing.md) 참조 |
 
-- 락 경합 워커 (Server C) 의 처리량 / consumer throttle 상세 → [동시성 보고서](concurrency.md), [유량 조절 보고서](rate-limiting.md)
+- 락 경합 워커 (Server C) 의 처리량 / consumer throttle 상세 → [동시성 보고서](concurrency.md), [유량 제어 보고서](rate-limiting.md)
 
 [← README](../../README.md)
