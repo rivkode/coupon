@@ -259,29 +259,32 @@ sequenceDiagram
 
 Server C 의 `OutboxPoller` — 트랜잭션 안전성을 위해 발급 결과를 Kafka 로 분리 publish (ADR-002).
 
+poller 자체에는 `@Transactional` 을 걸지 않는다. 걸면 batch (기본 50) 만큼의 Kafka publish 왕복이 하나의 DB 트랜잭션 안에 들어가, 같은 MySQL-C 에서 재고 행에 비관적 락을 잡는 발급 트랜잭션과 커넥션을 두고 경합한다 (CLAUDE.md §10 — 트랜잭션 안 외부 호출). 조회 / 발행 / 상태 갱신을 세 단계로 나눈다.
+
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Poll as OutboxPoller<br/>(@Scheduled · 500ms · @Transactional)
+    participant Poll as OutboxPoller<br/>(@Scheduled · 500ms · 트랜잭션 없음)
     participant DBC as MySQL-C<br/>(outbox_event)
     participant K as Kafka<br/>(coupon-issue-result)
 
-    loop 500ms fixedDelay (트랜잭션 안)
-        Poll->>DBC: SELECT * FROM outbox_event<br/>WHERE status = PENDING<br/>ORDER BY created_at LIMIT 50
+    loop 500ms fixedDelay
+        Poll->>DBC: SELECT * FROM outbox_event<br/>WHERE status = PENDING<br/>ORDER BY created_at LIMIT 50<br/>(repository 의 짧은 read 트랜잭션)
         DBC-->>Poll: rows
 
         Note over Poll: outbox.status = PENDING<br/>→ "아직 Kafka 로 안 보낸 row" (메타-상태)<br/>(SUCCESS/SOLD_OUT/FAILED 모두 INSERT 직후 PENDING)
 
-        loop 각 row
+        loop 각 row (트랜잭션 밖)
             Poll->>K: publish coupon-issue-result<br/>(payload = json)
             alt 성공
-                Poll->>DBC: UPDATE status=PUBLISHED, published_at=now
+                Note over Poll: id 를 published 목록에 모음
             else 실패
                 Note over Poll: status 유지 — 다음 주기 재시도<br/>(at-least-once)
             end
         end
-        Note over Poll: 트랜잭션 commit (모든 row 의 status 갱신을 묶음)
+
+        Poll->>DBC: UPDATE outbox_event SET status=PUBLISHED, published_at=now<br/>WHERE outbox_event_id IN (:ids)<br/>(단일 문장 — 짧은 write 트랜잭션)
     end
 ```
 
-> 중복 publish 방지: Kafka 발행 직후 row 의 status 를 PUBLISHED 로 갱신해 다음 cycle 에서 재선택 안 됨. 일시 장애로 publish 는 됐는데 status 갱신 직전 죽으면 다음 cycle 이 한 번 더 publish — at-least-once. B 의 result consumer 는 동일 메시지를 멱등 처리 (status 덮어쓰기는 idempotent).
+> 중복 publish 방지: 발행에 성공한 row 의 status 를 cycle 끝에서 PUBLISHED 로 갱신해 다음 cycle 에서 재선택 안 됨. publish 는 됐는데 상태 갱신 직전 죽으면 다음 cycle 이 한 번 더 publish — at-least-once. B 의 result consumer 는 동일 메시지를 멱등 처리 (status 덮어쓰기는 idempotent).

@@ -13,7 +13,7 @@
 - **목적**: 백엔드 채용 과제 (프로모션 도메인)
 - **핵심 평가 포인트**: 제한된 자원(1 vCPU, 2 GB RAM) 에서 대량 트래픽을 안정적으로 처리하는 분산 시스템 설계 및 구현
 - **시나리오**: **이벤트별 선착순 할인 쿠폰 발급 및 사용**
-    - 이벤트 100 개 × 이벤트별 쿠폰 10,000 장
+    - 이벤트 100 개 × 이벤트별 쿠폰 **100 장** (사용자 1,000 명 대비 재고를 적게 두어 매진이 반드시 발생하는 조건. 요청의 대부분이 매진 이후에 도착한다)
     - 사용자는 이벤트당 1 장만 발급 가능 (`(user_id, coupon_type_id)` UNIQUE)
     - 발급(Issue): 사용자가 쿠폰을 청구하는 행위 (메인 트래픽)
     - 사용(Redeem): 발급받은 쿠폰을 결제 등에서 소비하는 행위 (보조 기능)
@@ -26,8 +26,9 @@
 | 항목 | 값 |
 |------|------|
 | 총 사용자 (피크) | 1,000 명 |
-| 사용자당 요청 | 10 초 내 100 건 |
-| 인스턴스당 목표 | **1,000 TPS** (Server A 한 대 기준) |
+| 사용자당 요청 | 10 초 내 10 건 (사용자당 100 건은 10 초 안에 발생할 수 없다고 보고 재정의) |
+| 시스템 전체 목표 | **1,000 TPS** (1,000 명 × 10 건 / 10 초) |
+| 인스턴스당 측정 처리량 | **977 RPS** (1,000 TPS × 60 초 부하의 안정 구간, 실패 0%) → 가용률 70% 적용 시 **2 대** |
 | 데이터 형식 | JSON, 10 개 필드 |
 | 프로토콜 | HTTPS |
 | 서버 사양 | vCPU 1, RAM 2 GB (Server A, B, C 각각) |
@@ -205,7 +206,8 @@
 ### ADR-010: A 의 요청 로그는 per-request commit (batch insert 아님)
 - 결정: `IssueRequest` 를 요청당 한 번 JPA save() / commit. batch insert 큐 없음.
 - 근거: 신규 흐름은 응답 latency 가 즉시 "접수 완료" 라 짧음 → A 에 별도 비동기 큐를 둘 필요 없음. 단순함이 우선.
-- 측정: 1 vCPU MySQL-A 가 1000 commit/sec 를 처리 못 하면 batch 로 회귀 검토.
+- 측정 (2026-08-27): 1,000 TPS 부하에서 **MySQL-A 는 병목이 아니다** — CPU 27~39% 이고 커밋 fsync 를 꺼도
+  처리량과 pool 대기가 그대로였다. 제약은 server-a 의 CPU 다. batch 회귀 검토는 불필요.
 
 ### ADR-011: 매진 신호의 negative cache (A 단락 + C 쓰기)
 - 결정: `coupon:available:{eventId}:{couponTypeId}` 키 — 존재만으로 SOLD_OUT 표현 (값은 의미 없음). **A 의 `IssueRequestService` 진입부**에서 `EXISTS` 로 단락하고 (B 호출 자체를 skip + `IssueAcceptanceStatus.SOLD_OUT` 응답 + audit log 는 SOLD_OUT 으로 기록). C 의 `CouponIssueProcessor` 가 트랜잭션 `afterCommit` hook 에서 inventory 를 fresh read 해 `availableCount == 0` 이면 `SET EX(24h)`.

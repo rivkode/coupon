@@ -1,11 +1,16 @@
 # 동시성 이슈 분석 및 해결
 
+>
+> **자원 제약 표기 정정** — `docker-compose.yml` 의 `cpus: 1.0` 제한은 앱 컨테이너(server-a/b/c)에만,
+> `cpus: 2.0` 은 Kafka 에만 걸려 있다. **MySQL 과 Redis 에는 CPU 제한이 없다.** 아래 서술의 "MySQL" 은
+> 1 vCPU 로 제한된 컨테이너가 아니라 호스트 자원을 공유하는 컨테이너다.
+
 ![system-design-optimistic](../photo/system-design-concurrency-process.png)
 
 ## 0. 요약
 
 - **멱등성**: `user_coupon (user_id, coupon_type_id)` UNIQUE 로 1 인 1 장을 DB 레벨에서 강제. Kafka 중복 메시지 / 사용자 중복 요청 모두 동일하게 차단.
-- **재고 동시성 (발급)**: `coupon_type_inventory` row 에 **비관적 락 (`SELECT ... FOR UPDATE`)**. 500–1,000 TPS 의 hot-row 경합에서 충돌 재시도 비용이 큰 낙관적 락보다 유리.
+- **재고 동시성 (발급)**: `coupon_type_inventory` row 에 **비관적 락 (`SELECT ... FOR UPDATE`)**. 1,000 TPS 진입이 hot-row 하나로 수렴하는 경합에서 충돌 재시도 비용이 큰 낙관적 락보다 유리.
 - **쿠폰 사용 (Redeem)**: 같은 row 의 동시 호출이 드물기 때문에 **`@Version` 낙관적 락**. 비관적 락의 오버헤드 회피 (ADR-007).
 - **단일화 원칙**: 두 가지 동시성 도구를 도메인 특성에 맞게 **다르게** 사용 — 발급은 비관적, 사용은 낙관적.
 
@@ -63,7 +68,7 @@ Optional<CouponTypeInventoryJpaEntity> findForUpdate(...)
 #### 대안 A — 낙관적 락 (`@Version`)
 재고 row 에 version 컬럼을 두고 `UPDATE ... WHERE version = ?` 로 갱신, 0 row 면 재시도.
 
-- ❌ **거부 이유**: 본 도메인은 **500–1,000 TPS 가 hot-row 1 개에 집중되는 high-contention 워크로드**. 낙관적 락은 충돌 빈도가 높을 때 다음 비용을 부담:
+- ❌ **거부 이유**: 본 도메인은 **1,000 TPS 의 진입이 hot-row 1 개로 수렴하는 high-contention 워크로드**. 낙관적 락은 충돌 빈도가 높을 때 다음 비용을 부담:
   - 충돌 재시도마다 SELECT → INSERT → 재SELECT → 재INSERT 사이클 반복
   - 애플리케이션 레벨 retry loop 가 Tomcat 워커 / DB 커넥션을 더 오래 점유
   - 결과적으로 낙관적 락의 throughput 이 비관적 락보다 **낮아짐** (high-contention 영역의 일반적인 결과)
@@ -85,11 +90,34 @@ DB 가 락을 직접 관리.
   - 락 보유와 데이터 갱신이 같은 트랜잭션 → 원자성 자연 보장.
   - Redis / 애플리케이션 별도 메커니즘 불필요 → 단순.
 
-### 3.3 비관적 락의 위험과 대응
+### 3.3 락 경합의 크기 — 측정값
+
+"hot row 경합이 크다" 는 주장을 측정으로 확인했다. 컨슈머 스레드 수와 재고 행 개수를 교차한 결과다
+(1,000 TPS × 60 초, 3 회차 합산. 원본: `load-test/experiments/results/run0 · run8 · run9 · run10`).
+
+| 조건 | 스레드 | 건당 처리 | 처리량 | 스레드 이용률 |
+|---|---|---|---|---|
+| 재고 행 1, 스레드 1 (현재 기본값) | 1 | **6.8 ms** | **141 건/s** | 0.96 |
+| 재고 행 1, 스레드 3 | 3 | **14.9 ms** | 187 건/s | 0.93 |
+| 재고 행 10, 스레드 1 | 1 | 7.0 ms | 135 건/s | 0.94 |
+| 재고 행 10, 스레드 3 | 3 | 8.8 ms | **321 건/s** | 0.94 |
+
+1. **스레드가 1 개면 행 개수는 무관하다** (141 vs 135). 기다릴 상대가 없으므로 경합 자체가 없다 —
+   `concurrency=1` 에서는 락 대기가 존재하지 않는다는 직접 증거.
+2. **행이 하나면 스레드 3 배가 +33 % 뿐이다.** 건당 처리 시간이 2.2 배로 늘고, **늘어난 8 ms 는 전부
+   `SELECT ... FOR UPDATE` 대기**다. 이것이 hot row 경합의 실제 크기다.
+3. **행을 나누면 병렬화가 산다** (135 → 321 건/s). 따라서 2 의 손실은 전적으로 행 락이며 Kafka 병렬도 문제가 아니다.
+4. **병목은 이동한다.** 321 건/s 지점에서 C 의 CPU 가 0.92 로, 다음 제약은 1 코어다.
+
+→ 재고 행 sharding (`event:{id}:stock:{0..N}`) 이 이론적으로 유효하다는 것도 여기서 확인된다. 다만 매진 판정 /
+잔여 합산 / 재고 보충의 복잡도를 지불할 만큼의 이득인지는 별개이며, 현재 명세 조건에서는 필요하지 않다
+([정합성 보고서 대안 B](distributed-consistency.md)).
+
+### 3.4 비관적 락의 위험과 대응
 
 | 위험 | 대응 |
 |---|---|
-| 락 큐 폭주 (1 vCPU MySQL 의 처리 한계 초과) | Kafka consumer throttle (`max.poll.records=10`, `concurrency=1`) 로 **유입을 제한** — [유량 조절 보고서](rate-limiting.md) |
+| 락 큐 폭주 (MySQL 의 처리 한계 초과) | Kafka consumer throttle (실효값 `max.poll.records=50`, listener 스레드 1 개) 로 **유입을 제한** — [유량 제어 보고서](rate-limiting.md) |
 | 사용자 응답 latency 가 락 대기에 묶임 | **사용자 응답 경로에서 락을 분리** — Server A → B → Kafka 까지만 동기, 락은 C consumer 에서. [대량 트래픽 보고서](traffic.md) |
 | 트랜잭션 길어지면서 deadlock | 트랜잭션 안에서 외부 호출 금지 (Outbox 분리), 단일 row 락만 잡음 (multi-row 락 회피) |
 

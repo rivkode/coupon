@@ -35,3 +35,6 @@ out/
 
 ### VS Code ###
 .vscode/
+
+### 면접 준비 (개인 문서, 커밋 제외) ###
+docs/question/
